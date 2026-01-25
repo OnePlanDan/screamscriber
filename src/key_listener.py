@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum, auto
-from typing import Callable, Set
+from typing import Callable, Set, List, Optional
 
 from utils import ConfigManager
 
@@ -281,6 +281,7 @@ class KeyListener:
         self.backends = []
         self.active_backend = None
         self.key_chord = None
+        self.is_running = False
         self.callbacks = {
             "on_activate": [],
             "on_deactivate": []
@@ -341,8 +342,12 @@ class KeyListener:
 
     def start(self):
         """Start the active backend."""
+        if self.is_running:
+            return  # Already running, don't start again
+            
         if self.active_backend:
             self.active_backend.start()
+            self.is_running = True
         else:
             raise RuntimeError("No active backend selected")
 
@@ -350,6 +355,7 @@ class KeyListener:
         """Stop the active backend."""
         if self.active_backend:
             self.active_backend.stop()
+        self.is_running = False
 
     def load_activation_keys(self):
         """Load activation keys from configuration."""
@@ -763,6 +769,13 @@ class PynputBackend(InputBackend):
 
     def start(self):
         """Start listening for keyboard and mouse events."""
+        # If already running, don't start again to prevent X11 connection leaks
+        if (self.keyboard_listener and hasattr(self.keyboard_listener, 'running') and self.keyboard_listener.running):
+            return
+            
+        # Stop any existing listeners first
+        self.stop()
+        
         if self.keyboard is None or self.mouse is None:
             from pynput import keyboard, mouse
             self.keyboard = keyboard
@@ -782,11 +795,28 @@ class PynputBackend(InputBackend):
     def stop(self):
         """Stop listening for keyboard and mouse events."""
         if self.keyboard_listener:
-            self.keyboard_listener.stop()
-            self.keyboard_listener = None
+            try:
+                if hasattr(self.keyboard_listener, 'running') and self.keyboard_listener.running:
+                    self.keyboard_listener.stop()
+                # Wait briefly for proper cleanup
+                if hasattr(self.keyboard_listener, 'join'):
+                    self.keyboard_listener.join(timeout=0.5)
+            except Exception as e:
+                print(f"Warning: Error stopping keyboard listener: {e}")
+            finally:
+                self.keyboard_listener = None
+        
         if self.mouse_listener:
-            self.mouse_listener.stop()
-            self.mouse_listener = None
+            try:
+                if hasattr(self.mouse_listener, 'running') and self.mouse_listener.running:
+                    self.mouse_listener.stop()
+                # Wait briefly for proper cleanup
+                if hasattr(self.mouse_listener, 'join'):
+                    self.mouse_listener.join(timeout=0.5)
+            except Exception as e:
+                print(f"Warning: Error stopping mouse listener: {e}")
+            finally:
+                self.mouse_listener = None
 
     def _translate_key_event(self, native_event) -> tuple[KeyCode, InputEvent]:
         """Translate a pynput event to our internal event representation."""

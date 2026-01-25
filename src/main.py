@@ -7,6 +7,7 @@ from PyQt5.QtCore import QObject, QProcess
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 
+from api_server import APIServer
 from key_listener import KeyListener
 from result_thread import ResultThread
 from ui.main_window import MainWindow
@@ -65,6 +66,24 @@ class WhisperWriterApp(QObject):
         self.create_tray_icon()
         self.main_window.show()
 
+        self.api_server = None
+        self.start_api_server()
+
+    def start_api_server(self):
+        """Start the API server if enabled and local model is available."""
+        api_config = ConfigManager.get_config_section('api_server') or {}
+        if not api_config.get('enabled', False):
+            return
+
+        if not self.local_model:
+            ConfigManager.console_print('API server requires local model (use_api must be false)')
+            return
+
+        host = api_config.get('host', '127.0.0.1')
+        port = api_config.get('port', 5000)
+        self.api_server = APIServer(self.local_model, host=host, port=port)
+        self.api_server.start()
+
     def create_tray_icon(self):
         """
         Create the system tray icon and its context menu.
@@ -89,6 +108,8 @@ class WhisperWriterApp(QObject):
         self.tray_icon.show()
 
     def cleanup(self):
+        if self.api_server:
+            self.api_server.stop()
         if self.key_listener:
             self.key_listener.stop()
         if self.input_simulator:
