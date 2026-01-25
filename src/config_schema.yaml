@@ -54,6 +54,8 @@ model_options:
         - large-v1
         - large-v2
         - large-v3
+        - distil-large-v2
+        - distil-large-v3
     device:
       value: auto
       type: str
@@ -165,3 +167,18 @@ misc:
     value: false
     type: bool
     description: "Set to true to play a noise after the transcription has been typed out."
+
+# HTTP API server settings (OpenAI-compatible)
+api_server:
+  enabled:
+    value: false
+    type: bool
+    description: "Enable the local HTTP API server for external transcription requests."
+  port:
+    value: 5000
+    type: int
+    description: "The port number for the HTTP API server."
+  host:
+    value: "127.0.0.1"
+    type: str
+    description: "The host address. Use 127.0.0.1 for localhost only."

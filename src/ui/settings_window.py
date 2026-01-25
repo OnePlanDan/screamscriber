@@ -47,6 +47,19 @@ class SettingsWindow(BaseWindow):
 
             self.create_settings_widgets(tab_layout, category, settings)
             tab_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        
+        # Add Model Manager button to the Model Options tab
+        model_tab = self.tabs.widget(0)  # First tab is Model Options
+        if model_tab:
+            # Add current model info
+            current_model = ConfigManager.get_config_value('model_options', 'local', 'model') or 'base'
+            model_info_label = QLabel(f"Current Model: {current_model}")
+            model_info_label.setStyleSheet("font-weight: bold; color: #2196F3; margin: 10px 0;")
+            model_tab.layout().addWidget(model_info_label)
+            
+            model_manager_btn = QPushButton("Open Model Manager")
+            model_manager_btn.clicked.connect(self.open_model_manager)
+            model_tab.layout().addWidget(model_manager_btn)
 
     def create_settings_widgets(self, layout, category, settings):
         """Create widgets for each setting in a category."""
@@ -111,6 +124,9 @@ class SettingsWindow(BaseWindow):
         if meta_type == 'bool':
             return self.create_checkbox(current_value, key)
         elif meta_type == 'str' and 'options' in meta:
+            # Skip the model dropdown since it's now handled in the model manager
+            if category == 'model_options' and sub_category == 'local' and key == 'model':
+                return None
             return self.create_combobox(current_value, meta['options'])
         elif meta_type == 'str':
             return self.create_line_edit(current_value, key)
@@ -125,10 +141,16 @@ class SettingsWindow(BaseWindow):
             widget.setObjectName('model_options_use_api_input')
         return widget
 
-    def create_combobox(self, value, options):
+    def create_combobox(self, value, options, allow_custom=False):
+        """Create a combo box. If allow_custom is True, the box is editable so users can type custom values."""
         widget = QComboBox()
         widget.addItems(options)
         widget.setCurrentText(value)
+
+        # Allow users to type their own entry when permitted (e.g. for model names)
+        if allow_custom:
+            widget.setEditable(True)
+
         return widget
 
     def create_line_edit(self, value, key=None):
@@ -280,6 +302,12 @@ class SettingsWindow(BaseWindow):
                         widget = self.findChild(QWidget, f"{category}_{sub_category}_{key}_input")
                         if widget:
                             func(widget, category, sub_category, key, meta)
+
+    def open_model_manager(self):
+        """Open the model manager window."""
+        from ui.model_manager import ModelManagerWindow
+        self.model_manager = ModelManagerWindow()
+        self.model_manager.show()
 
     def closeEvent(self, event):
         """Confirm before closing the settings window without saving."""
