@@ -89,7 +89,11 @@ class ModelManagerWindow(BaseWindow):
         open_folder_btn = QPushButton("Open Models Folder")
         open_folder_btn.clicked.connect(self.open_models_folder)
         button_layout.addWidget(open_folder_btn)
-        
+
+        benchmark_btn = QPushButton("Test All Downloaded Models")
+        benchmark_btn.clicked.connect(self.benchmark_models)
+        button_layout.addWidget(benchmark_btn)
+
         button_layout.addStretch()
         
         close_btn = QPushButton("Close")
@@ -344,11 +348,11 @@ class ModelManagerWindow(BaseWindow):
     def open_models_folder(self):
         """Open the models folder in file manager."""
         cache_dir = self.get_models_directory()
-        
+
         if not os.path.exists(cache_dir):
             QMessageBox.information(self, "No Models", "No models have been downloaded yet.")
             return
-        
+
         try:
             if sys.platform == "win32":
                 os.startfile(cache_dir)
@@ -357,4 +361,44 @@ class ModelManagerWindow(BaseWindow):
             else:
                 subprocess.run(["xdg-open", cache_dir])
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not open folder: {str(e)}") 
+            QMessageBox.warning(self, "Error", f"Could not open folder: {str(e)}")
+
+    def benchmark_models(self):
+        """Run benchmark on all downloaded models with test audio samples."""
+        # Find downloaded models
+        downloaded = []
+        for model_name in self.get_available_models():
+            is_dl, _ = self.is_model_downloaded(model_name)
+            if is_dl:
+                downloaded.append(model_name)
+
+        if not downloaded:
+            QMessageBox.warning(self, "No Models",
+                                "No downloaded models found to benchmark.")
+            return
+
+        # Find test audio files
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        testspeech_dir = os.path.join(project_root, 'assets', 'testspeech')
+
+        from ui.model_benchmark import discover_audio_files, BenchmarkProgressWindow
+        audio_files = discover_audio_files(testspeech_dir)
+
+        if not audio_files:
+            QMessageBox.warning(self, "No Test Audio",
+                                f"No audio files found in:\n{testspeech_dir}\n\n"
+                                "Add .wav, .mp3, or .flac files to test with.")
+            return
+
+        # Get device/compute settings from config
+        local_config = ConfigManager.get_config_section('model_options')['local']
+        compute_type = local_config['compute_type']
+        device = 'cpu' if compute_type == 'int8' else local_config['device']
+
+        # Launch benchmark
+        self._benchmark_window = BenchmarkProgressWindow()
+        self._benchmark_window.start_benchmark(
+            downloaded, audio_files, device, compute_type
+        ) 
