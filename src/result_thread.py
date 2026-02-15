@@ -31,6 +31,7 @@ class ResultThread(QThread):
 
     statusSignal = pyqtSignal(str)
     resultSignal = pyqtSignal(str)
+    audioLevelSignal = pyqtSignal(list)
 
     def __init__(self, local_model=None):
         """
@@ -138,6 +139,23 @@ class ResultThread(QThread):
                 ConfigManager.console_print(f"Audio callback status: {status}")
             audio_buffer.extend(indata[:, 0])
             data_ready.set()
+            # FFT-based spectrum: 16 logarithmically-spaced frequency bands
+            samples = indata[:, 0].astype(np.float32) / 32768.0
+            spectrum = np.abs(np.fft.rfft(samples))
+            n_bins = len(spectrum)
+            freq_per_bin = (self.sample_rate or 16000) / 2.0 / (n_bins - 1)
+
+            # 200 linearly-spaced frequency bands
+            n_bands = 200
+            band_edges = np.linspace(1, n_bins, n_bands + 1).astype(int)
+            levels = []
+            for i in range(n_bands):
+                lo = band_edges[i]
+                hi = max(lo + 1, band_edges[i + 1])
+                band_mag = np.mean(spectrum[lo:hi])
+                levels.append(float(min(band_mag * 0.8, 1.0)))
+
+            self.audioLevelSignal.emit(levels)
 
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16',
                             blocksize=frame_size, device=recording_options.get('sound_device'),
