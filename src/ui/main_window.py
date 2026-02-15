@@ -1,6 +1,6 @@
 import os
 import sys
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer
 
@@ -16,7 +16,7 @@ class MainWindow(BaseWindow):
         """
         Initialize the main window.
         """
-        super().__init__('WhisperWriter', 320, 180)
+        super().__init__('Screamscriber', 353, 287)
         self.initMainUI()
 
     def initMainUI(self):
@@ -25,13 +25,14 @@ class MainWindow(BaseWindow):
         """
         self.close_button.hide()
 
-        welcome_label = QLabel('Welcome to WhisperWriter')
-        welcome_label.setFont(QFont('Segoe UI', 14))
-        welcome_label.setAlignment(Qt.AlignCenter)
-        welcome_label.setStyleSheet("color: #404040;")
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignCenter)
+        pixmap = QPixmap(os.path.join('assets', 'boyandbot.png'))
+        pixmap = pixmap.scaled(313, 227, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image_label.setPixmap(pixmap)
 
         self.main_layout.addStretch(1)
-        self.main_layout.addWidget(welcome_label)
+        self.main_layout.addWidget(image_label)
         self.main_layout.addStretch(1)
 
         self._splash_timer = QTimer(self)

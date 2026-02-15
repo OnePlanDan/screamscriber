@@ -1,5 +1,5 @@
 """
-OpenAI-compatible HTTP API server for WhisperWriter.
+OpenAI-compatible HTTP API server for Screamscriber.
 
 Implements POST /v1/audio/transcriptions to allow external tools to use
 the local Whisper model by setting base_url to http://localhost:5000/v1
