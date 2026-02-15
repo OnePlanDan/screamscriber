@@ -103,7 +103,7 @@ class ModelManagerWindow(BaseWindow):
         return [
             "tiny", "tiny.en", "base", "base.en", "small", "small.en",
             "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3",
-            "distil-large-v2", "distil-large-v3"
+            "large-v3-turbo", "distil-large-v2", "distil-large-v3"
         ]
     
     def get_model_sizes(self):
@@ -121,6 +121,7 @@ class ModelManagerWindow(BaseWindow):
             "large-v1": 1550,
             "large-v2": 1550,
             "large-v3": 1550,
+            "large-v3-turbo": 1620,
             "distil-large-v2": 775,
             "distil-large-v3": 775
         }
@@ -150,6 +151,7 @@ class ModelManagerWindow(BaseWindow):
             "large-v1": "models--Systran--faster-whisper-large-v1",
             "large-v2": "models--Systran--faster-whisper-large-v2",
             "large-v3": "models--Systran--faster-whisper-large-v3",
+            "large-v3-turbo": "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo",
             "distil-large-v2": "models--Systran--faster-distil-whisper-large-v2",
             "distil-large-v3": "models--Systran--faster-distil-whisper-large-v3"
         }
