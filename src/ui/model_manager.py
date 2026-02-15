@@ -294,7 +294,7 @@ class ModelManagerWindow(BaseWindow):
         
         QMessageBox.information(self, "Model Selected", 
                               f"{model_name} has been selected as the active model.\n\n"
-                              "The change will take effect when you restart WhisperWriter.")
+                              "The change will take effect when you restart Screamscriber.")
         
         # Refresh the table to update the selection indicators
         self.refresh_model_list()

@@ -71,7 +71,7 @@ class StatusWindow(BaseWindow):
         """
         Initialize the status window.
         """
-        super().__init__('WhisperWriter Status', 320, 180)
+        super().__init__('Screamscriber Status', 320, 180)
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
         self.initStatusUI()
