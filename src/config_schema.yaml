@@ -3,7 +3,8 @@ model_options:
   use_api:
     value: false
     type: bool
-    description: "Toggle to choose whether to use the OpenAI API or a local Whisper model for transcription."
+    label: "Connect to API"
+    description: "Connect to an external API for transcription instead of using a local Whisper model. Can point to OpenAI's API or another Screamscriber instance."
 
   # Common configuration options for both API and local models
   common:
@@ -174,12 +175,13 @@ api_server:
   enabled:
     value: false
     type: bool
-    description: "Enable the local HTTP API server for external transcription requests."
+    label: "Host API server"
+    description: "Host an OpenAI-compatible transcription API so other apps or Screamscriber instances can send audio to this machine for transcription."
   port:
     value: 5000
     type: int
     description: "The port number for the HTTP API server."
   host:
-    value: "127.0.0.1"
+    value: "0.0.0.0"
     type: str
-    description: "The host address. Use 127.0.0.1 for localhost only."
+    description: "The network interface to listen on. Use 0.0.0.0 to accept connections from other machines, or 127.0.0.1 for localhost only."

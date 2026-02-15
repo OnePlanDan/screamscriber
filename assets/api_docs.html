@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screamscriber API Documentation</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    margin: 0; padding: 32px 40px; background: #fafafa; color: #333;
+    max-width: 860px; margin: 0 auto; line-height: 1.6;
+  }
+  h1 { margin-bottom: 4px; }
+  h1 small { font-weight: 400; color: #888; font-size: 0.5em; display: block; margin-top: 4px; }
+  h2 { color: #444; margin-top: 40px; border-bottom: 2px solid #e0e0e0; padding-bottom: 6px; }
+  h3 { color: #555; margin-top: 28px; }
+  p, li { font-size: 0.95em; }
+  code {
+    background: #f0f0f0; padding: 2px 6px; border-radius: 4px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: #1e1e1e; color: #d4d4d4; padding: 16px 20px;
+    border-radius: 8px; overflow-x: auto; line-height: 1.5;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 0.85em;
+  }
+  pre .comment { color: #6a9955; }
+  pre .string { color: #ce9178; }
+  pre .keyword { color: #569cd6; }
+  pre .func { color: #dcdcaa; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 16px 0;
+    background: #fff; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  th { background: #2d2d2d; color: #fff; padding: 10px 14px; text-align: left; font-size: 0.88em; }
+  td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 0.88em; }
+  tr:last-child td { border-bottom: none; }
+  .info-box {
+    background: #e3f2fd; border-left: 4px solid #1565c0; padding: 14px 18px;
+    border-radius: 4px; margin: 20px 0; color: #1565c0;
+  }
+  .warn-box {
+    background: #fff3e0; border-left: 4px solid #e65100; padding: 14px 18px;
+    border-radius: 4px; margin: 20px 0; color: #e65100;
+  }
+  .method { display: inline-block; background: #4caf50; color: #fff; padding: 2px 8px;
+    border-radius: 4px; font-weight: 600; font-size: 0.82em; margin-right: 8px; }
+  .method.get { background: #2196f3; }
+  .endpoint { font-family: monospace; font-size: 1.05em; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>Screamscriber API
+  <small>OpenAI-compatible local transcription server</small>
+</h1>
+
+<p>
+  Screamscriber can host an HTTP API server that is compatible with the
+  <a href="https://platform.openai.com/docs/api-reference/audio/createTranscription">OpenAI Audio Transcription API</a>.
+  Any tool that can talk to OpenAI's <code>/v1/audio/transcriptions</code> endpoint
+  can use Screamscriber as a drop-in local replacement.
+</p>
+
+<h2>Quick Start</h2>
+
+<ol>
+  <li>Open <strong>Settings &rarr; Api server</strong> tab</li>
+  <li>Check <strong>Host API server</strong></li>
+  <li>Set <strong>Host</strong> to <code>0.0.0.0</code> (accept connections from other machines) or <code>127.0.0.1</code> (localhost only)</li>
+  <li>Set <strong>Port</strong> (default: <code>5000</code>)</li>
+  <li>Save and restart Screamscriber</li>
+</ol>
+
+<p>The server will start automatically and log
+  <code>API server started at http://0.0.0.0:5000</code> in the terminal.</p>
+
+<h2>Endpoints</h2>
+
+<h3><span class="method">POST</span> <span class="endpoint">/v1/audio/transcriptions</span></h3>
+
+<p>Transcribe an audio file. Accepts the same multipart form fields as the OpenAI API.</p>
+
+<table>
+  <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>file</code></td><td>binary</td><td>Yes</td><td>Audio file (WAV, MP3, FLAC, OGG, etc.)</td></tr>
+  <tr><td><code>model</code></td><td>string</td><td>No</td><td>Ignored &mdash; the server uses whichever model is loaded locally</td></tr>
+  <tr><td><code>language</code></td><td>string</td><td>No</td><td>ISO-639-1 language code (e.g. <code>en</code>, <code>sv</code>)</td></tr>
+  <tr><td><code>prompt</code></td><td>string</td><td>No</td><td>Initial prompt to guide the transcription</td></tr>
+  <tr><td><code>temperature</code></td><td>float</td><td>No</td><td>Sampling temperature (0.0 &ndash; 1.0)</td></tr>
+</table>
+
+<p><strong>Response:</strong></p>
+<pre>{
+  <span class="string">"text"</span>: <span class="string">"The transcribed text appears here."</span>
+}</pre>
+
+<h3><span class="method get">GET</span> <span class="endpoint">/v1/models</span></h3>
+
+<p>List the currently loaded model.</p>
+
+<pre>{
+  <span class="string">"object"</span>: <span class="string">"list"</span>,
+  <span class="string">"data"</span>: [{
+    <span class="string">"id"</span>: <span class="string">"large-v3-turbo"</span>,
+    <span class="string">"object"</span>: <span class="string">"model"</span>,
+    <span class="string">"owned_by"</span>: <span class="string">"local"</span>
+  }]
+}</pre>
+
+<h2>Examples</h2>
+
+<h3>curl</h3>
+<pre><span class="comment"># Transcribe a WAV file</span>
+curl http://localhost:5000/v1/audio/transcriptions \
+  -F file=@recording.wav \
+  -F language=en
+
+<span class="comment"># From another machine on the network</span>
+curl http://192.168.1.42:5000/v1/audio/transcriptions \
+  -F file=@recording.wav</pre>
+
+<h3>Python (OpenAI SDK)</h3>
+<pre><span class="keyword">from</span> openai <span class="keyword">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="string">"http://localhost:5000/v1"</span>,
+    api_key=<span class="string">"not-needed"</span>,  <span class="comment"># any string works, no auth required</span>
+)
+
+<span class="keyword">with</span> <span class="func">open</span>(<span class="string">"recording.wav"</span>, <span class="string">"rb"</span>) <span class="keyword">as</span> f:
+    result = client.audio.transcriptions.<span class="func">create</span>(
+        model=<span class="string">"whisper-1"</span>,  <span class="comment"># ignored by server, uses loaded model</span>
+        file=f,
+        language=<span class="string">"en"</span>,
+    )
+
+<span class="func">print</span>(result.text)</pre>
+
+<h2>Chaining Two Screamscriber Instances</h2>
+
+<div class="info-box">
+  You can run Screamscriber on a powerful machine with a GPU and models,
+  then connect a second lightweight Screamscriber instance to it over the network.
+</div>
+
+<h3>Machine A &mdash; the model server</h3>
+<ol>
+  <li>Install Screamscriber and download the models you want</li>
+  <li>Settings &rarr; Api server: enable, host <code>0.0.0.0</code>, port <code>5000</code></li>
+  <li>Save and restart &mdash; the API server starts automatically</li>
+</ol>
+
+<h3>Machine B &mdash; the thin client</h3>
+<ol>
+  <li>Install Screamscriber (no models needed)</li>
+  <li>Settings &rarr; Model options: check <strong>Connect to API</strong></li>
+  <li>Set <strong>Base url</strong> to <code>http://&lt;machine-a-ip&gt;:5000/v1</code></li>
+  <li>Leave <strong>Api key</strong> empty (no authentication required)</li>
+  <li>Save and restart</li>
+</ol>
+
+<p>Machine B now records audio locally and sends it to Machine A for transcription.
+  The result comes back over the network and gets typed out as usual.</p>
+
+<div class="warn-box">
+  <strong>Security note:</strong> The API server has no authentication.
+  Only expose it on trusted networks. Use <code>127.0.0.1</code> if you only
+  need local access.
+</div>
+
+<h2>Error Responses</h2>
+
+<p>Errors follow the OpenAI error format:</p>
+
+<pre>{
+  <span class="string">"error"</span>: {
+    <span class="string">"message"</span>: <span class="string">"Description of what went wrong"</span>,
+    <span class="string">"type"</span>: <span class="string">"invalid_request_error"</span>,
+    <span class="string">"code"</span>: null
+  }
+}</pre>
+
+<table>
+  <tr><th>Status</th><th>Cause</th></tr>
+  <tr><td><code>400</code></td><td>Missing file field or bad Content-Type</td></tr>
+  <tr><td><code>404</code></td><td>Unknown endpoint</td></tr>
+  <tr><td><code>500</code></td><td>Transcription failed (model error, corrupt audio, etc.)</td></tr>
+  <tr><td><code>503</code></td><td>Local model not loaded (use_api is enabled or model failed to load)</td></tr>
+</table>
+
+</body>
+</html>

@@ -61,6 +61,30 @@ class SettingsWindow(BaseWindow):
             model_manager_btn.clicked.connect(self.open_model_manager)
             model_tab.layout().addWidget(model_manager_btn)
 
+        # Add explanatory header and docs button to the Api server tab
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i).lower().startswith("api"):
+                api_tab = self.tabs.widget(i)
+                tab_layout = api_tab.layout()
+
+                info_label = QLabel(
+                    "This API server exposes an OpenAI-compatible transcription endpoint "
+                    "so other applications — or another Screamscriber instance — can send "
+                    "audio to this machine for transcription.\n\n"
+                    "Endpoint: POST /v1/audio/transcriptions"
+                )
+                info_label.setWordWrap(True)
+                info_label.setStyleSheet(
+                    "background: #e3f2fd; color: #1565c0; padding: 10px; "
+                    "border-radius: 6px; margin-bottom: 6px;"
+                )
+                tab_layout.insertWidget(0, info_label)
+
+                api_docs_btn = QPushButton("View API Documentation")
+                api_docs_btn.clicked.connect(self.open_api_docs)
+                tab_layout.insertWidget(1, api_docs_btn)
+                break
+
     def create_settings_widgets(self, layout, category, settings):
         """Create widgets for each setting in a category."""
         for sub_category, sub_settings in settings.items():
@@ -83,7 +107,8 @@ class SettingsWindow(BaseWindow):
     def add_setting_widget(self, layout, key, meta, category, sub_category=None):
         """Add a setting widget to the layout."""
         item_layout = QHBoxLayout()
-        label = QLabel(f"{key.replace('_', ' ').capitalize()}:")
+        label_text = meta.get('label', key.replace('_', ' ').capitalize())
+        label = QLabel(f"{label_text}:")
         label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         widget = self.create_widget_for_type(key, meta, category, sub_category)
@@ -308,6 +333,15 @@ class SettingsWindow(BaseWindow):
         from ui.model_manager import ModelManagerWindow
         self.model_manager = ModelManagerWindow()
         self.model_manager.show()
+
+    def open_api_docs(self):
+        """Open the API documentation in the default browser."""
+        import webbrowser
+        docs_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'assets', 'api_docs.html'
+        )
+        webbrowser.open(f"file://{docs_path}")
 
     def closeEvent(self, event):
         """Confirm before closing the settings window without saving."""
