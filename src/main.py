@@ -13,7 +13,6 @@ from result_thread import ResultThread
 from ui.main_window import MainWindow
 from ui.settings_window import SettingsWindow
 from ui.status_window import StatusWindow
-from transcription import create_local_model
 from input_simulation import InputSimulator
 from utils import ConfigManager
 
@@ -31,7 +30,7 @@ class ScreamScriberApp(QObject):
 
         self.settings_window = SettingsWindow()
         self.settings_window.settings_closed.connect(self.on_settings_closed)
-        self.settings_window.settings_saved.connect(self.restart_app)
+        self.settings_window.settings_saved.connect(self.on_settings_saved)
 
         if ConfigManager.config_file_exists():
             self.initialize_components()
@@ -49,9 +48,8 @@ class ScreamScriberApp(QObject):
         self.key_listener.add_callback("on_activate", self.on_activation)
         self.key_listener.add_callback("on_deactivate", self.on_deactivation)
 
-        model_options = ConfigManager.get_config_section('model_options')
-        model_path = model_options.get('local', {}).get('model_path')
-        self.local_model = create_local_model() if not model_options.get('use_api') else None
+        # Lazy-load the model on first use for faster startup
+        self.local_model = None
 
         self.result_thread = None
 
@@ -74,9 +72,14 @@ class ScreamScriberApp(QObject):
         if not api_config.get('enabled', False):
             return
 
-        if not self.local_model:
+        if ConfigManager.get_config_value('model_options', 'use_api'):
             ConfigManager.console_print('API server requires local model (use_api must be false)')
             return
+
+        # Eagerly load the model for the API server
+        if self.local_model is None:
+            from transcription import create_local_model
+            self.local_model = create_local_model()
 
         host = api_config.get('host', '127.0.0.1')
         port = api_config.get('port', 5000)
@@ -139,6 +142,19 @@ class ScreamScriberApp(QObject):
             )
             self.initialize_components()
 
+    def on_settings_saved(self):
+        """
+        Apply settings without restarting the application.
+        """
+        ConfigManager.reload_config()
+
+        # Update key listener with new activation keys and backend
+        self.key_listener.update_activation_keys()
+        self.key_listener.update_backend()
+
+        # Clear model to force reload on next use with new settings
+        self.local_model = None
+
     def on_activation(self):
         """
         Called when the activation key combination is pressed.
@@ -167,6 +183,11 @@ class ScreamScriberApp(QObject):
         """
         if self.result_thread and self.result_thread.isRunning():
             return
+
+        # Lazy-load the local model on first use
+        if self.local_model is None and not ConfigManager.get_config_value('model_options', 'use_api'):
+            from transcription import create_local_model
+            self.local_model = create_local_model()
 
         self.result_thread = ResultThread(self.local_model)
         if not ConfigManager.get_config_value('misc', 'hide_status_window'):

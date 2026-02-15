@@ -232,7 +232,7 @@ class SettingsWindow(BaseWindow):
         ConfigManager.set_config_value(None, 'model_options', 'api', 'api_key')
 
         ConfigManager.save_config()
-        QMessageBox.information(self, 'Settings Saved', 'Settings have been saved. The application will now restart.')
+        QMessageBox.information(self, 'Settings Saved', 'Settings have been saved.')
         self.settings_saved.emit()
         self.close()
 

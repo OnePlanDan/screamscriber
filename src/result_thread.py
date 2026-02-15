@@ -118,11 +118,15 @@ class ResultThread(QThread):
         silence_duration_ms = recording_options.get('silence_duration') or 900
         silence_frames = int(silence_duration_ms / frame_duration_ms)
 
-        # 150ms delay before starting VAD to avoid mistaking the sound of key pressing for voice
-        initial_frames_to_skip = int(0.15 * self.sample_rate / frame_size)
-
         # Create VAD only for recording modes that use it
         recording_mode = recording_options.get('recording_mode') or 'continuous'
+
+        # 150ms delay before starting VAD to avoid mistaking the sound of key pressing for voice
+        # Skip the delay for hold_to_record mode since the key is still being held
+        if recording_mode == 'hold_to_record':
+            initial_frames_to_skip = 0
+        else:
+            initial_frames_to_skip = int(0.15 * self.sample_rate / frame_size)
         vad = None
         if recording_mode in ('voice_activity_detection', 'continuous'):
             vad = webrtcvad.Vad(2)  # VAD aggressiveness: 0 to 3, 3 being the most aggressive
