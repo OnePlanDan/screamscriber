@@ -8,6 +8,12 @@
 
 Hold the key. Speak. Text appears. Wow.
 
+## API Server
+
+Screamscriber can host an OpenAI-compatible transcription API, so other apps or a second Screamscriber instance can send audio over the network for transcription.
+
+See the [API Documentation](./assets/api_docs.html) for endpoints, examples, and chaining setup.
+
 ## Credits
 
 - [savbell](https://github.com/savbell) for creating the original [WhisperWriter](https://github.com/savbell/whisper-writer) project.
