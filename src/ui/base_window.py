@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QPainter, QBrush, QColor, QFont, QPainterPath, QGuiApplication
+from PyQt5.QtGui import QPainter, QBrush, QColor, QFont, QPainterPath, QGuiApplication, QCursor
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QMainWindow
 
 
@@ -42,9 +42,9 @@ class BaseWindow(QMainWindow):
         close_button_layout = QHBoxLayout(close_button_widget)
         close_button_layout.setContentsMargins(0, 0, 0, 0)
 
-        close_button = QPushButton('×')
-        close_button.setFixedSize(25, 25)
-        close_button.setStyleSheet("""
+        self.close_button = QPushButton('×')
+        self.close_button.setFixedSize(25, 25)
+        self.close_button.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 border: none;
@@ -54,9 +54,9 @@ class BaseWindow(QMainWindow):
                 color: #000000;
             }
         """)
-        close_button.clicked.connect(self.handleCloseButton)
+        self.close_button.clicked.connect(self.handleCloseButton)
 
-        close_button_layout.addWidget(close_button, alignment=Qt.AlignRight)
+        close_button_layout.addWidget(self.close_button, alignment=Qt.AlignRight)
 
         # Add widgets to the title bar layout
         title_bar_layout.addWidget(QWidget(), 1)  # Left spacer
@@ -70,7 +70,8 @@ class BaseWindow(QMainWindow):
         """
         Set the window position to the center of the screen.
         """
-        center_point = QGuiApplication.primaryScreen().availableGeometry().center()
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        center_point = screen.availableGeometry().center()
         frame_geometry = self.frameGeometry()
         frame_geometry.moveCenter(center_point)
         self.move(frame_geometry.topLeft())

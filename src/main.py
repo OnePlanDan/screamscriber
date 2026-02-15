@@ -56,7 +56,6 @@ class WhisperWriterApp(QObject):
         self.result_thread = None
 
         self.main_window = MainWindow()
-        self.main_window.openSettings.connect(self.settings_window.show)
         self.main_window.startListening.connect(self.key_listener.start)
         self.main_window.closeApp.connect(self.exit_app)
 
@@ -172,6 +171,7 @@ class WhisperWriterApp(QObject):
         self.result_thread = ResultThread(self.local_model)
         if not ConfigManager.get_config_value('misc', 'hide_status_window'):
             self.result_thread.statusSignal.connect(self.status_window.updateStatus)
+            self.result_thread.audioLevelSignal.connect(self.status_window.updateAudioLevel)
             self.status_window.closeSignal.connect(self.stop_result_thread)
         self.result_thread.resultSignal.connect(self.on_transcription_complete)
         self.result_thread.start()
