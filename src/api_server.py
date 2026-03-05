@@ -28,12 +28,25 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
         """Override to use ConfigManager's console print."""
         ConfigManager.console_print(f"API: {args[0]}")
 
+    def add_cors_headers(self):
+        """Add CORS headers to the response."""
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self.add_cors_headers()
+        self.end_headers()
+
     def send_json_response(self, data, status=200):
         """Send a JSON response."""
         response = json.dumps(data).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', len(response))
+        self.add_cors_headers()
         self.end_headers()
         self.wfile.write(response)
 
