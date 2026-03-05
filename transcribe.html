@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Screamscriber</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 40px 20px;
+  }
+  h1 { font-size: 1.4em; margin-bottom: 24px; color: #fff; }
+  #drop-zone {
+    width: 100%; max-width: 600px; min-height: 200px;
+    border: 2px dashed #444; border-radius: 12px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 40px; cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.hover { border-color: #7c3aed; background: rgba(124,58,237,0.08); }
+  #drop-zone.busy { border-color: #f59e0b; cursor: wait; }
+  #drop-zone p { font-size: 1.05em; color: #888; pointer-events: none; }
+  #drop-zone .hint { font-size: 0.85em; color: #555; margin-top: 8px; }
+  #file-input { display: none; }
+  #result-area {
+    width: 100%; max-width: 600px; margin-top: 24px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .result {
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+    padding: 16px; position: relative;
+  }
+  .result .filename { font-size: 0.8em; color: #666; margin-bottom: 6px; }
+  .result .text { line-height: 1.5; white-space: pre-wrap; }
+  .result .meta { font-size: 0.75em; color: #555; margin-top: 8px; }
+  .result .copy-btn {
+    position: absolute; top: 12px; right: 12px;
+    background: #222; border: 1px solid #333; color: #aaa;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em;
+  }
+  .result .copy-btn:hover { background: #333; color: #fff; }
+  .error { color: #ef4444; }
+  #api-url {
+    background: #111; border: 1px solid #333; color: #ccc;
+    padding: 6px 12px; border-radius: 6px; font-size: 0.85em;
+    width: 100%; max-width: 600px; margin-bottom: 16px; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>Screamscriber</h1>
+<input id="api-url" value="http://localhost:5000" placeholder="API base URL">
+
+<div id="drop-zone">
+  <p>Drop audio files here</p>
+  <span class="hint">or click to browse &mdash; wav, mp3, flac, ogg, m4a, webm</span>
+</div>
+<input type="file" id="file-input" multiple accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm">
+
+<div id="result-area"></div>
+
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const resultArea = document.getElementById('result-area');
+const apiUrlInput = document.getElementById('api-url');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('hover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('hover');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => { handleFiles(fileInput.files); fileInput.value = ''; });
+
+function handleFiles(files) {
+  for (const file of files) transcribe(file);
+}
+
+async function transcribe(file) {
+  const card = document.createElement('div');
+  card.className = 'result';
+  card.innerHTML = `<div class="filename">${file.name} (${(file.size/1024).toFixed(1)} KB)</div><div class="text" style="color:#888">Transcribing...</div>`;
+  resultArea.prepend(card);
+  dropZone.classList.add('busy');
+
+  const baseUrl = apiUrlInput.value.replace(/\/+$/, '');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('language', 'en');
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${baseUrl}/v1/audio/transcriptions`, { method: 'POST', body: form });
+    const data = await res.json();
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
+    if (data.error) {
+      card.querySelector('.text').innerHTML = `<span class="error">${data.error.message}</span>`;
+    } else {
+      card.querySelector('.text').textContent = data.text || '(empty)';
+      card.innerHTML += `<div class="meta">${elapsed}s</div>`;
+      card.innerHTML += `<button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('.text').textContent)">Copy</button>`;
+    }
+  } catch (err) {
+    card.querySelector('.text').innerHTML = `<span class="error">Failed: ${err.message}</span>`;
+  }
+  dropZone.classList.remove('busy');
+}
+</script>
+</body>
+</html>
