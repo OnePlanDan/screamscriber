@@ -2,7 +2,7 @@ import sys
 import os
 from PyQt5.QtCore import Qt, QRectF, pyqtSignal, pyqtSlot, QTimer, QObject
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QBrush, QColor, QPainterPath, QCursor
-from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ui.base_window import BaseWindow
@@ -11,7 +11,7 @@ from ui.base_window import BaseWindow
 class SpectrumData(QObject):
     """Holds spectrum level data with smooth decay. No painting — the window draws it."""
 
-    NUM_BANDS = 200
+    NUM_BANDS = 160  # 1px bar + 1px gap = 2px per band = 320px
     DECAY_RATE = 0.06
 
     updated = pyqtSignal()
@@ -71,7 +71,7 @@ class StatusWindow(BaseWindow):
         """
         Initialize the status window.
         """
-        super().__init__('Screamscriber Status', 320, 180)
+        super().__init__('Screamscriber Status', 320, 90)
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
         self.initStatusUI()
@@ -82,30 +82,40 @@ class StatusWindow(BaseWindow):
         Initialize the status user interface.
         """
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.title_bar.hide()
         self.close_button.hide()
 
         status_layout = QHBoxLayout()
-        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setContentsMargins(6, 4, 2, 4)
+        status_layout.setAlignment(Qt.AlignVCenter)
 
-        self.icon_label = QLabel()
-        self.icon_label.setFixedSize(32, 32)
+        # Left side: title + status stacked tight, top-left
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(0)
+        self.title_label = QLabel('Screamscriber')
+        self.title_label.setFont(QFont('Segoe UI', 9, QFont.Bold))
+        self.status_label = QLabel('Recording...')
+        self.status_label.setFont(QFont('Segoe UI', 8))
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.status_label)
+        text_layout.addStretch(1)
+
+        # Right side: full-height icon, vertically centered
+        icon_size = 70
         microphone_path = os.path.join('assets', 'microphone.png')
         pencil_path = os.path.join('assets', 'pencil.png')
-        self.microphone_pixmap = QPixmap(microphone_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.pencil_pixmap = QPixmap(pencil_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.microphone_pixmap = QPixmap(microphone_path).scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.pencil_pixmap = QPixmap(pencil_path).scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(icon_size, icon_size)
         self.icon_label.setPixmap(self.microphone_pixmap)
         self.icon_label.setAlignment(Qt.AlignCenter)
 
-        self.status_label = QLabel('Recording...')
-        self.status_label.setFont(QFont('Segoe UI', 12))
-
+        status_layout.addLayout(text_layout)
         status_layout.addStretch(1)
-        status_layout.addWidget(self.icon_label)
-        status_layout.addWidget(self.status_label)
-        status_layout.addStretch(1)
+        status_layout.addWidget(self.icon_label, alignment=Qt.AlignVCenter)
 
         self.main_layout.addLayout(status_layout)
-        self.main_layout.addStretch(1)
 
     def show(self):
         """
@@ -161,14 +171,15 @@ class StatusWindow(BaseWindow):
             w = self.width()
             h = self.height()
             n = SpectrumData.NUM_BANDS
-            bar_w = w / n
+            bar_w = 1.0
+            step = 2.0  # 1px bar + 1px gap
             display = self.spectrum.display
 
             for i in range(n):
                 bar_h = display[i] * h
                 if bar_h < 1:
                     continue
-                x = i * bar_w
+                x = i * step
                 painter.drawRect(QRectF(x, h - bar_h, bar_w, bar_h))
 
         painter.end()
