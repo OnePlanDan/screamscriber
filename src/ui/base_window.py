@@ -27,7 +27,8 @@ class BaseWindow(QMainWindow):
         self.main_layout.setContentsMargins(10, 10, 10, 10)
 
         # Create a widget for the title bar
-        title_bar = QWidget()
+        self.title_bar = QWidget()
+        title_bar = self.title_bar
         title_bar_layout = QHBoxLayout(title_bar)
         title_bar_layout.setContentsMargins(0, 0, 0, 0)
 

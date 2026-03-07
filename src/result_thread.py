@@ -141,7 +141,7 @@ class ResultThread(QThread):
         # Precompute mel-scale filterbank for voice-focused spectrum visualization
         sr = self.sample_rate
         n_fft_bins = frame_size // 2 + 1
-        n_bands = 200
+        n_bands = 160
         f_min, f_max = 60.0, 8000.0  # Voice range: fundamentals through sibilants
         mel_min = 2595.0 * np.log10(1.0 + f_min / 700.0)
         mel_max = 2595.0 * np.log10(1.0 + f_max / 700.0)
