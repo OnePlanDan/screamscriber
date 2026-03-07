@@ -138,27 +138,36 @@ class ResultThread(QThread):
 
         data_ready = Event()
 
+        # Precompute mel-scale filterbank for voice-focused spectrum visualization
+        sr = self.sample_rate
+        n_fft_bins = frame_size // 2 + 1
+        n_bands = 200
+        f_min, f_max = 60.0, 8000.0  # Voice range: fundamentals through sibilants
+        mel_min = 2595.0 * np.log10(1.0 + f_min / 700.0)
+        mel_max = 2595.0 * np.log10(1.0 + f_max / 700.0)
+        mel_points = np.linspace(mel_min, mel_max, n_bands + 1)
+        freq_points = 700.0 * (10.0 ** (mel_points / 2595.0) - 1.0)
+        mel_bin_edges = np.round(freq_points * frame_size / sr).astype(int)
+        mel_bin_edges = np.clip(mel_bin_edges, 0, n_fft_bins - 1)
+        db_floor = -50.0
+        db_ceil = 10.0
+
         def audio_callback(indata, frames, time, status):
             if status:
                 ConfigManager.console_print(f"Audio callback status: {status}")
             audio_buffer.extend(indata[:, 0])
             data_ready.set()
-            # FFT-based spectrum: 16 logarithmically-spaced frequency bands
+            # Mel-scale spectrum: voice-focused frequency bands with dB amplitude
             samples = indata[:, 0].astype(np.float32) / 32768.0
-            spectrum = np.abs(np.fft.rfft(samples))
-            n_bins = len(spectrum)
-            freq_per_bin = (self.sample_rate or 16000) / 2.0 / (n_bins - 1)
-
-            # 200 linearly-spaced frequency bands
-            n_bands = 200
-            band_edges = np.linspace(1, n_bins, n_bands + 1).astype(int)
+            power = np.abs(np.fft.rfft(samples)) ** 2
             levels = []
             for i in range(n_bands):
-                lo = band_edges[i]
-                hi = max(lo + 1, band_edges[i + 1])
-                band_mag = np.mean(spectrum[lo:hi])
-                levels.append(float(min(band_mag * 0.8, 1.0)))
-
+                lo = mel_bin_edges[i]
+                hi = max(lo + 1, mel_bin_edges[i + 1])
+                band_power = np.mean(power[lo:hi])
+                db = 10.0 * np.log10(max(band_power, 1e-10))
+                level = (db - db_floor) / (db_ceil - db_floor)
+                levels.append(float(max(0.0, min(1.0, level))))
             self.audioLevelSignal.emit(levels)
 
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16',
