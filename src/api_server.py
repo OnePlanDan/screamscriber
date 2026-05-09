@@ -113,6 +113,8 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
             language = form_data.get('language')
             prompt = form_data.get('prompt')
             temperature = form_data.get('temperature')
+            response_format = form_data.get('response_format', 'json')
+            timestamp_granularities = form_data.get('timestamp_granularities[]', 'segment')
 
             if temperature is not None:
                 try:
@@ -150,18 +152,79 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
             if temperature is not None:
                 transcribe_kwargs['temperature'] = temperature
 
+            verbose = response_format == 'verbose_json'
+            want_words = verbose and 'word' in timestamp_granularities
+
+            if want_words:
+                transcribe_kwargs['word_timestamps'] = True
+
             duration = len(audio_data) / 16000
             ConfigManager.console_print(f'API: Received audio. Duration: {duration:.2f} seconds')
             ConfigManager.console_print('Transcribing...')
 
+            from transcription import resolve_engine
+            engine = resolve_engine()
+
+            response_data = None
             start_time = time.time()
-            segments, info = self.local_model.transcribe(**transcribe_kwargs)
-            text = ''.join([segment.text for segment in segments])
+            if engine == 'mlx':
+                from mlx_engine import transcribe_mlx_full
+                result = transcribe_mlx_full(audio_data, repo=self.local_model, word_timestamps=want_words)
+                text = result['text']
+                if verbose:
+                    response_data = {
+                        'text': text.strip(),
+                        'language': result.get('language', ''),
+                        'duration': duration,
+                        'segments': [],
+                    }
+                    for s in result.get('segments', []):
+                        seg = {
+                            'id': s.get('id', 0),
+                            'start': s.get('start', 0.0),
+                            'end': s.get('end', 0.0),
+                            'text': s.get('text', ''),
+                            'no_speech_prob': s.get('no_speech_prob', 0.0),
+                        }
+                        if want_words and s.get('words'):
+                            seg['words'] = [
+                                {'word': w.get('word'), 'start': w.get('start'), 'end': w.get('end')}
+                                for w in s['words']
+                            ]
+                        response_data['segments'].append(seg)
+            else:
+                segments, info = self.local_model.transcribe(**transcribe_kwargs)
+                segment_list = list(segments)
+                text = ''.join([s.text for s in segment_list])
+                if verbose:
+                    response_data = {
+                        'text': text.strip(),
+                        'language': info.language,
+                        'duration': info.duration,
+                        'segments': [],
+                    }
+                    for s in segment_list:
+                        seg = {
+                            'id': s.id,
+                            'start': s.start,
+                            'end': s.end,
+                            'text': s.text,
+                            'no_speech_prob': s.no_speech_prob,
+                        }
+                        if want_words and s.words:
+                            seg['words'] = [
+                                {'word': w.word, 'start': w.start, 'end': w.end}
+                                for w in s.words
+                            ]
+                        response_data['segments'].append(seg)
             elapsed = time.time() - start_time
 
             ConfigManager.console_print(f'Transcription completed in {elapsed:.2f} seconds. Result: {text.strip()}')
 
-            self.send_json_response({'text': text.strip()})
+            if verbose:
+                self.send_json_response(response_data)
+            else:
+                self.send_json_response({'text': text.strip()})
 
         except Exception as e:
             ConfigManager.console_print(f'API transcription error: {e}')

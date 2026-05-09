@@ -1,12 +1,36 @@
+import _macos_fix  # noqa: F401  -- patch pynput before it loads
 import os
 import sys
 import time
+
+
+def _save_frontmost_app():
+    """Capture the macOS frontmost app so we can refocus it before typing."""
+    if sys.platform != 'darwin':
+        return None
+    try:
+        from AppKit import NSWorkspace
+        return NSWorkspace.sharedWorkspace().frontmostApplication()
+    except Exception:
+        return None
+
+
+def _restore_frontmost_app(app_ref):
+    """Re-activate a previously saved macOS app and give it a moment to focus."""
+    if app_ref is None:
+        return
+    try:
+        # NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
+        app_ref.activateWithOptions_(2)
+        time.sleep(0.05)
+    except Exception:
+        pass
 try:
     from audioplayer import AudioPlayer
 except ImportError:
     AudioPlayer = None
 from pynput.keyboard import Controller
-from PyQt5.QtCore import QObject, QProcess
+from PyQt5.QtCore import QObject, QProcess, QFileSystemWatcher, QTimer
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 
@@ -69,14 +93,41 @@ class ScreamScriberApp(QObject):
         self.api_server = None
         self.start_api_server()
 
+        self._setup_config_watcher()
+
+    def _setup_config_watcher(self):
+        """Hot-reload settings when src/config.yaml is edited on disk."""
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+        if not os.path.exists(config_path):
+            return
+        self._config_watcher = QFileSystemWatcher([config_path])
+        self._config_path = config_path
+        self._reload_timer = QTimer()
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.timeout.connect(self._do_config_reload)
+        self._config_watcher.fileChanged.connect(self._on_config_file_changed)
+
+    def _on_config_file_changed(self, path):
+        # Editors often save by atomic-rename, which removes the watched
+        # path; re-add it so subsequent changes still fire. Debounce to
+        # ride out multi-event saves.
+        if not self._config_watcher.files():
+            self._config_watcher.addPath(self._config_path)
+        self._reload_timer.start(250)
+
+    def _do_config_reload(self):
+        ConfigManager.console_print('config.yaml changed — reloading settings.')
+        self.on_settings_saved()
+
     def start_api_server(self):
         """Start the API server if enabled and local model is available."""
         api_config = ConfigManager.get_config_section('api_server') or {}
         if not api_config.get('enabled', False):
             return
 
-        if ConfigManager.get_config_value('model_options', 'use_api'):
-            ConfigManager.console_print('API server requires local model (use_api must be false)')
+        from transcription import resolve_engine
+        if resolve_engine() == 'api':
+            ConfigManager.console_print('API server requires a local engine (faster-whisper or mlx)')
             return
 
         # Eagerly load the model for the API server
@@ -187,6 +238,11 @@ class ScreamScriberApp(QObject):
         if self.result_thread and self.result_thread.isRunning():
             return
 
+        # Capture the app the user was focused on at hotkey-press time so we
+        # can re-focus it before typing — the StatusWindow appearing would
+        # otherwise steal focus and the keystrokes would land nowhere.
+        self._saved_frontmost = _save_frontmost_app()
+
         # Lazy-load the local model on first use
         if self.local_model is None and not ConfigManager.get_config_value('model_options', 'use_api'):
             from transcription import create_local_model
@@ -211,6 +267,7 @@ class ScreamScriberApp(QObject):
         """
         When the transcription is complete, type the result and start listening for the activation key again.
         """
+        _restore_frontmost_app(getattr(self, '_saved_frontmost', None))
         self.input_simulator.typewrite(result)
 
         if ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:

@@ -5,7 +5,7 @@ from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QBrush, QColor, QPainte
 from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from ui.base_window import BaseWindow
+from ui.base_window import BaseWindow, ui_font
 
 
 class SpectrumData(QObject):
@@ -81,7 +81,13 @@ class StatusWindow(BaseWindow):
         """
         Initialize the status user interface.
         """
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.Tool
+            | Qt.WindowDoesNotAcceptFocus  # never grab keyboard focus from the user's text field
+        )
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.title_bar.hide()
         self.close_button.hide()
 
@@ -93,9 +99,9 @@ class StatusWindow(BaseWindow):
         text_layout = QVBoxLayout()
         text_layout.setSpacing(0)
         self.title_label = QLabel('Screamscriber')
-        self.title_label.setFont(QFont('Segoe UI', 9, QFont.Bold))
+        self.title_label.setFont(ui_font(9, bold=True))
         self.status_label = QLabel('Recording...')
-        self.status_label.setFont(QFont('Segoe UI', 8))
+        self.status_label.setFont(ui_font(8))
         text_layout.addWidget(self.title_label)
         text_layout.addWidget(self.status_label)
         text_layout.addStretch(1)
@@ -133,6 +139,30 @@ class StatusWindow(BaseWindow):
 
         self.move(x, y)
         super().show()
+        self.raise_()
+        self._enable_fullscreen_overlay()
+
+    def _enable_fullscreen_overlay(self):
+        """Make the overlay appear over fullscreen Spaces too.
+
+        macOS isolates fullscreen apps in their own Space; by default,
+        overlay windows from other apps don't follow into it. Setting the
+        NSWindow collectionBehavior to CanJoinAllSpaces | FullScreenAuxiliary
+        is what Apple's own HUDs (volume, brightness) and tools like Bartender
+        use to float over fullscreen content.
+        """
+        import sys
+        if sys.platform != 'darwin':
+            return
+        try:
+            import objc
+            ns_view = objc.objc_object(c_void_p=int(self.winId()))
+            ns_window = ns_view.window()
+            # NSWindowCollectionBehaviorCanJoinAllSpaces      = 1 << 0
+            # NSWindowCollectionBehaviorFullScreenAuxiliary   = 1 << 8
+            ns_window.setCollectionBehavior_((1 << 0) | (1 << 8))
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         """

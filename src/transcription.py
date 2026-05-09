@@ -2,15 +2,42 @@ import io
 import os
 import numpy as np
 import soundfile as sf
-from faster_whisper import WhisperModel
 from openai import OpenAI
 
 from utils import ConfigManager
+from mlx_engine import create_mlx_model, transcribe_mlx
+
+
+def resolve_engine():
+    """Resolve which transcription engine to use.
+
+    New configs set `model_options.engine` directly. Legacy configs only have
+    `use_api`; honor that as a fallback so old configs keep working without
+    migration.
+    """
+    model_options = ConfigManager.get_config_section('model_options') or {}
+    engine = model_options.get('engine')
+    if engine in {'api', 'faster-whisper', 'mlx'}:
+        return engine
+    return 'api' if model_options.get('use_api') else 'faster-whisper'
+
 
 def create_local_model():
     """
-    Create a local model using the faster-whisper library.
+    Create a local model handle for the active engine.
+
+    For faster-whisper this is an eager WhisperModel load.
+    For mlx this is just the repo string (MLX loads lazily).
     """
+    engine = resolve_engine()
+    if engine == 'mlx':
+        return create_mlx_model()
+    if engine == 'api':
+        return None
+
+    # faster-whisper path — eager load
+    from faster_whisper import WhisperModel
+
     ConfigManager.console_print('Creating local model...')
     local_model_options = ConfigManager.get_config_section('model_options')['local']
     compute_type = local_model_options['compute_type']
@@ -46,7 +73,7 @@ def create_local_model():
 
 def transcribe_local(audio_data, local_model=None):
     """
-    Transcribe an audio file using a local model.
+    Transcribe an audio file using a local faster-whisper model.
     """
     if not local_model:
         local_model = create_local_model()
@@ -105,13 +132,16 @@ def post_process_transcription(transcription):
 
 def transcribe(audio_data, local_model=None):
     """
-    Transcribe audio date using the OpenAI API or a local model, depending on config.
+    Transcribe audio using the active engine: api, faster-whisper, or mlx.
     """
     if audio_data is None:
         return ''
 
-    if ConfigManager.get_config_value('model_options', 'use_api'):
+    engine = resolve_engine()
+    if engine == 'api':
         transcription = transcribe_api(audio_data)
+    elif engine == 'mlx':
+        transcription = transcribe_mlx(audio_data, repo=local_model)
     else:
         transcription = transcribe_local(audio_data, local_model)
 

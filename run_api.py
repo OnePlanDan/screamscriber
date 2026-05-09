@@ -12,6 +12,8 @@ import time
 # Ensure src/ is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
+import _macos_fix  # noqa: F401  -- patch pynput before it loads
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -23,8 +25,9 @@ from api_server import APIServer
 def main():
     ConfigManager.initialize()
 
-    if ConfigManager.get_config_value('model_options', 'use_api'):
-        print('ERROR: use_api must be false for API server mode (need a local model)')
+    from transcription import resolve_engine
+    if resolve_engine() == 'api':
+        print('ERROR: engine must be a local engine (faster-whisper or mlx) for API server mode')
         sys.exit(1)
 
     api_config = ConfigManager.get_config_section('api_server') or {}
