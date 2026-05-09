@@ -3,6 +3,19 @@ import os
 import sys
 import time
 
+# Run as a macOS "accessory" app (no Dock icon, no app menu bar). This is the
+# right activation policy for a hotkey-driven background tool — same pattern
+# as Bartender, Rectangle, Superwhisper, etc. — and it's the *only* policy
+# under which third-party apps can render overlays in fullscreen Spaces.
+# Must be set before QApplication is constructed.
+if sys.platform == 'darwin':
+    try:
+        from AppKit import NSApplication
+        # NSApplicationActivationPolicyAccessory = 1
+        NSApplication.sharedApplication().setActivationPolicy_(1)
+    except Exception:
+        pass
+
 
 def _save_frontmost_app():
     """Capture the macOS frontmost app so we can refocus it before typing."""

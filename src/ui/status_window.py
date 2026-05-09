@@ -98,10 +98,16 @@ class StatusWindow(BaseWindow):
         # Left side: title + status stacked tight, top-left
         text_layout = QVBoxLayout()
         text_layout.setSpacing(0)
+        # Explicit dark text color so the labels stay readable on the
+        # forced-white window background regardless of macOS dark/light mode
+        # (Qt's default label color flips to white in dark mode).
+        label_color = "color: #404040;"
         self.title_label = QLabel('Screamscriber')
         self.title_label.setFont(ui_font(9, bold=True))
+        self.title_label.setStyleSheet(label_color)
         self.status_label = QLabel('Recording...')
         self.status_label.setFont(ui_font(8))
+        self.status_label.setStyleSheet(label_color)
         text_layout.addWidget(self.title_label)
         text_layout.addWidget(self.status_label)
         text_layout.addStretch(1)
@@ -140,29 +146,6 @@ class StatusWindow(BaseWindow):
         self.move(x, y)
         super().show()
         self.raise_()
-        self._enable_fullscreen_overlay()
-
-    def _enable_fullscreen_overlay(self):
-        """Make the overlay appear over fullscreen Spaces too.
-
-        macOS isolates fullscreen apps in their own Space; by default,
-        overlay windows from other apps don't follow into it. Setting the
-        NSWindow collectionBehavior to CanJoinAllSpaces | FullScreenAuxiliary
-        is what Apple's own HUDs (volume, brightness) and tools like Bartender
-        use to float over fullscreen content.
-        """
-        import sys
-        if sys.platform != 'darwin':
-            return
-        try:
-            import objc
-            ns_view = objc.objc_object(c_void_p=int(self.winId()))
-            ns_window = ns_view.window()
-            # NSWindowCollectionBehaviorCanJoinAllSpaces      = 1 << 0
-            # NSWindowCollectionBehaviorFullScreenAuxiliary   = 1 << 8
-            ns_window.setCollectionBehavior_((1 << 0) | (1 << 8))
-        except Exception:
-            pass
 
     def closeEvent(self, event):
         """
