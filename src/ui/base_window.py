@@ -3,6 +3,21 @@ from PyQt5.QtGui import QPainter, QBrush, QColor, QFont, QPainterPath, QGuiAppli
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QMainWindow
 
 
+# Cross-platform UI font fallback stack. Qt picks the first family that's
+# installed: SF Pro on macOS, Segoe UI on Windows, Cantarell on GNOME,
+# generic sans-serif otherwise. No Qt fallback warnings on any platform.
+UI_FONT_FAMILIES = ['.AppleSystemUIFont', 'Segoe UI', 'Cantarell', 'sans-serif']
+
+
+def ui_font(point_size=12, bold=False):
+    f = QFont()
+    f.setFamilies(UI_FONT_FAMILIES)
+    f.setPointSize(point_size)
+    if bold:
+        f.setBold(True)
+    return f
+
+
 class BaseWindow(QMainWindow):
     def __init__(self, title, width, height):
         """
@@ -34,7 +49,7 @@ class BaseWindow(QMainWindow):
 
         # Add the title label
         title_label = QLabel('Screamscriber')
-        title_label.setFont(QFont('Segoe UI', 12, QFont.Bold))
+        title_label.setFont(ui_font(12, bold=True))
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setStyleSheet("color: #404040;")
 
