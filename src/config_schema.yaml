@@ -201,3 +201,26 @@ api_server:
     value: "0.0.0.0"
     type: str
     description: "The network interface to listen on. Use 0.0.0.0 to accept connections from other machines, or 127.0.0.1 for localhost only."
+  allow_remote_typing:
+    value: true
+    type: bool
+    label: "Allow remote typing endpoint"
+    description: "Expose POST /v1/type so external tools can type text at the cursor. Returns 403 when disabled."
+  confirm_remote_typing:
+    value: true
+    type: bool
+    label: "Confirm remote typing with countdown"
+    description: "When on, show a visible countdown before remote-API typing happens. Press any key during the countdown to abort. Requires the GUI to be running."
+  confirm_countdown_seconds:
+    value: 3
+    type: int
+    description: "Seconds the countdown window stays open before typing starts. Set 0 to type immediately without a visible gate."
+  confirm_grace_minutes:
+    value: 3
+    type: int
+    description: "After a confirmed remote-typing request, suppress the countdown for this many minutes. Resets on app restart."
+  confirm_beep:
+    value: false
+    type: bool
+    label: "Beep when countdown starts"
+    description: "Play a short system beep when the remote-typing countdown opens."

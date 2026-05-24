@@ -53,7 +53,9 @@ from result_thread import ResultThread
 from ui.main_window import MainWindow
 from ui.settings_window import SettingsWindow
 from ui.status_window import StatusWindow
+from ui.countdown_window import CountdownWindow
 from input_simulation import InputSimulator
+from typing_gate import TypingGate
 from utils import ConfigManager
 
 
@@ -87,6 +89,9 @@ class ScreamScriberApp(QObject):
         self.key_listener = KeyListener()
         self.key_listener.add_callback("on_activate", self.on_activation)
         self.key_listener.add_callback("on_deactivate", self.on_deactivation)
+
+        self.countdown_window = CountdownWindow()
+        self.typing_gate = TypingGate(window=self.countdown_window, key_listener=self.key_listener)
 
         # Lazy-load the model on first use for faster startup
         self.local_model = None
@@ -150,7 +155,13 @@ class ScreamScriberApp(QObject):
 
         host = api_config.get('host', '127.0.0.1')
         port = api_config.get('port', 5000)
-        self.api_server = APIServer(self.local_model, host=host, port=port)
+        self.api_server = APIServer(
+            self.local_model,
+            host=host,
+            port=port,
+            input_simulator=self.input_simulator,
+            gate=self.typing_gate,
+        )
         self.api_server.start()
 
     def create_tray_icon(self):
@@ -183,6 +194,8 @@ class ScreamScriberApp(QObject):
             self.key_listener.stop()
         if self.input_simulator:
             self.input_simulator.cleanup()
+        if hasattr(self, 'countdown_window') and self.countdown_window:
+            self.countdown_window.close()
 
     def exit_app(self):
         """

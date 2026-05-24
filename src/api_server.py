@@ -1,8 +1,10 @@
 """
 OpenAI-compatible HTTP API server for Screamscriber.
 
-Implements POST /v1/audio/transcriptions to allow external tools to use
-the local Whisper model by setting base_url to http://localhost:5000/v1
+Implements:
+  POST /v1/audio/transcriptions  - transcribe audio (OpenAI-compatible)
+  POST /v1/type                  - type text at the cursor and return
+                                   X11 window diagnostics (requires xprop)
 """
 
 import io
@@ -15,13 +17,16 @@ import numpy as np
 import soundfile as sf
 
 from utils import ConfigManager
+from window_info import capture_active_window
 
 
 class TranscriptionHandler(BaseHTTPRequestHandler):
     """HTTP request handler for OpenAI-compatible transcription API."""
 
-    def __init__(self, *args, local_model=None, **kwargs):
+    def __init__(self, *args, local_model=None, input_simulator=None, gate=None, **kwargs):
         self.local_model = local_model
+        self.input_simulator = input_simulator
+        self.gate = gate
         super().__init__(*args, **kwargs)
 
     def log_message(self, format, *args):
@@ -71,6 +76,8 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
         """Handle POST requests."""
         if self.path == '/v1/audio/transcriptions' or self.path == '/v1/audio/transcriptions/':
             self.handle_transcription()
+        elif self.path == '/v1/type' or self.path == '/v1/type/':
+            self.handle_typewrite()
         else:
             self.send_error_response('Not found', 404)
 
@@ -230,6 +237,87 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
             ConfigManager.console_print(f'API transcription error: {e}')
             self.send_error_response(f'Transcription failed: {str(e)}', 500)
 
+    def handle_typewrite(self):
+        """Handle POST /v1/type - type text at the cursor with window diagnostics."""
+        if not ConfigManager.get_config_value('api_server', 'allow_remote_typing'):
+            self.send_error_response('Remote typing endpoint is disabled', 403)
+            return
+        if not self.input_simulator or not self.gate:
+            self.send_error_response('Typing endpoint requires GUI mode', 503)
+            return
+
+        content_type = self.headers.get('Content-Type', '')
+        if 'application/json' not in content_type:
+            self.send_error_response('Content-Type must be application/json')
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError) as e:
+            self.send_error_response(f'Invalid JSON body: {e}')
+            return
+
+        text = payload.get('text') if isinstance(payload, dict) else None
+        if not isinstance(text, str) or not text:
+            self.send_error_response('Field "text" must be a non-empty string')
+            return
+
+        backend = ConfigManager.get_config_value('post_processing', 'input_method')
+        source_ip = self.client_address[0] if self.client_address else None
+
+        before, before_err = capture_active_window()
+        ConfigManager.console_print(
+            f'API: typing request from {source_ip}, {len(text)} chars, target={before}'
+        )
+
+        gate_result = self.gate.await_permission(source_ip, before, text)
+        if not gate_result.granted:
+            ConfigManager.console_print(
+                f'API: typing gate denied ({gate_result.reason}) for {source_ip}'
+            )
+            self.send_json_response({
+                'ok': False,
+                'aborted': True,
+                'reason': gate_result.reason,
+                'source_ip': source_ip,
+                'window_before': before,
+            }, status=409)
+            return
+
+        t0 = time.perf_counter()
+        try:
+            self.input_simulator.typewrite(text)
+        except Exception as e:
+            ConfigManager.console_print(f'API typewrite error: {e}')
+            self.send_error_response(f'Typing failed: {str(e)}', 500)
+            return
+        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+        after, after_err = capture_active_window()
+
+        focus_changed = (
+            before is not None
+            and after is not None
+            and before != after
+        )
+
+        response = {
+            'ok': True,
+            'chars_typed': len(text),
+            'duration_ms': duration_ms,
+            'backend': backend,
+            'window_before': before,
+            'window_after': after,
+            'focus_changed': focus_changed,
+            'gate': {'reason': gate_result.reason, 'source_ip': source_ip},
+        }
+        capture_error = before_err or after_err
+        if capture_error:
+            response['window_capture_error'] = capture_error
+        self.send_json_response(response)
+
     def parse_multipart(self, body, content_type):
         """Parse multipart/form-data manually (no cgi module needed)."""
         boundary = None
@@ -287,8 +375,10 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
 class APIServer:
     """Manages the HTTP API server lifecycle."""
 
-    def __init__(self, local_model, host='127.0.0.1', port=5000):
+    def __init__(self, local_model, host='127.0.0.1', port=5000, input_simulator=None, gate=None):
         self.local_model = local_model
+        self.input_simulator = input_simulator
+        self.gate = gate
         self.host = host
         self.port = port
         self.server = None
@@ -300,7 +390,13 @@ class APIServer:
             return
 
         def handler(*args, **kwargs):
-            return TranscriptionHandler(*args, local_model=self.local_model, **kwargs)
+            return TranscriptionHandler(
+                *args,
+                local_model=self.local_model,
+                input_simulator=self.input_simulator,
+                gate=self.gate,
+                **kwargs,
+            )
 
         try:
             self.server = ThreadingHTTPServer((self.host, self.port), handler)
