@@ -284,7 +284,8 @@ class KeyListener:
         self.is_running = False
         self.callbacks = {
             "on_activate": [],
-            "on_deactivate": []
+            "on_deactivate": [],
+            "on_any_key_press": [],
         }
         self.load_activation_keys()
         self.initialize_backends()
@@ -395,6 +396,9 @@ class KeyListener:
             return
 
         key, event_type = event
+
+        if event_type == InputEvent.KEY_PRESS and self.callbacks.get("on_any_key_press"):
+            self._trigger_callbacks("on_any_key_press")
 
         was_active = self.key_chord.is_active()
         is_active = self.key_chord.update(key, event_type)

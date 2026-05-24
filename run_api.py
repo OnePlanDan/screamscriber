@@ -41,6 +41,7 @@ def main():
     print(f'Loading Whisper model...')
     local_model = create_local_model()
 
+    # Headless mode does not expose /v1/type — typing requires the GUI app.
     server = APIServer(local_model, host=host, port=port)
     server.start()
 
