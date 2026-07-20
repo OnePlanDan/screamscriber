@@ -278,6 +278,7 @@ class ScreamScriberApp(QObject):
         if not ConfigManager.get_config_value('misc', 'hide_status_window'):
             self.result_thread.statusSignal.connect(self.status_window.updateStatus)
             self.result_thread.audioLevelSignal.connect(self.status_window.updateAudioLevel)
+            self.result_thread.partialResultSignal.connect(self.status_window.showPartial)
             self.status_window.closeSignal.connect(self.stop_result_thread)
         self.result_thread.resultSignal.connect(self.on_transcription_complete)
         self.result_thread.start()
