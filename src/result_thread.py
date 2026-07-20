@@ -7,10 +7,15 @@ import wave
 import webrtcvad
 from PyQt5.QtCore import QThread, QMutex, pyqtSignal
 from collections import deque
-from threading import Event
+from threading import Event, Thread
 
-from transcription import transcribe
+from transcription import transcribe, resolve_engine
 from utils import ConfigManager
+
+# Engines fast enough to re-transcribe the buffer live during recording.
+LIVE_PREVIEW_ENGINES = {'parakeet', 'mlx'}
+PARTIAL_INTERVAL_S = 0.35   # how often to refresh the live text
+PARTIAL_MIN_S = 0.3         # don't transcribe until this much audio exists
 
 
 class ResultThread(QThread):
@@ -32,6 +37,7 @@ class ResultThread(QThread):
     statusSignal = pyqtSignal(str)
     resultSignal = pyqtSignal(str)
     audioLevelSignal = pyqtSignal(list)
+    partialResultSignal = pyqtSignal(str)
 
     def __init__(self, local_model=None):
         """
@@ -45,6 +51,7 @@ class ResultThread(QThread):
         self.is_running = True
         self.sample_rate = None
         self.mutex = QMutex()
+        self._partial_stop = Event()
 
     def stop_recording(self):
         """Stop the current recording session."""
@@ -104,6 +111,39 @@ class ResultThread(QThread):
             self.resultSignal.emit('')
         finally:
             self.stop_recording()
+
+    def _live_preview_enabled(self):
+        """Live text needs a fast local engine, a loaded model, and the toggle on."""
+        if self.local_model is None:
+            return False
+        if not ConfigManager.get_config_value('misc', 'live_preview'):
+            return False
+        return resolve_engine() in LIVE_PREVIEW_ENGINES
+
+    def _partial_loop(self, recording):
+        """Re-transcribe the growing buffer periodically and emit partial text.
+
+        Runs on its own thread while recording so the mic loop and MLX
+        inference never block each other. Reads `recording` (the same list the
+        record loop appends to) via a copy taken under the GIL. Stops before
+        the final transcription runs, so the two never hit the GPU at once.
+        """
+        min_samples = int(PARTIAL_MIN_S * self.sample_rate)
+        last_len = 0
+        while not self._partial_stop.wait(PARTIAL_INTERVAL_S):
+            if not (self.is_running and self.is_recording):
+                break
+            snapshot = recording[:]  # atomic slice-copy; record loop keeps extending
+            if len(snapshot) < min_samples or len(snapshot) == last_len:
+                continue
+            last_len = len(snapshot)
+            try:
+                text = transcribe(np.array(snapshot, dtype=np.int16), self.local_model)
+            except Exception:
+                traceback.print_exc()
+                continue
+            if text and text.strip():
+                self.partialResultSignal.emit(text.strip())
 
     def _record_audio(self):
         """
@@ -170,6 +210,13 @@ class ResultThread(QThread):
                 levels.append(float(max(0.0, min(1.0, level))))
             self.audioLevelSignal.emit(levels)
 
+        # Start live-preview worker (re-transcribes the buffer during recording)
+        self._partial_stop.clear()
+        partial_thread = None
+        if self._live_preview_enabled():
+            partial_thread = Thread(target=self._partial_loop, args=(recording,), daemon=True)
+            partial_thread.start()
+
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16',
                             blocksize=frame_size, device=recording_options.get('sound_device'),
                             callback=audio_callback):
@@ -201,6 +248,12 @@ class ResultThread(QThread):
 
                     if speech_detected and silent_frame_count > silence_frames:
                         break
+
+        # Stop the live-preview worker before the final transcription so the
+        # two never contend for the GPU. join waits out any in-flight pass.
+        self._partial_stop.set()
+        if partial_thread is not None:
+            partial_thread.join(timeout=1.0)
 
         audio_data = np.array(recording, dtype=np.int16)
         duration = len(audio_data) / self.sample_rate

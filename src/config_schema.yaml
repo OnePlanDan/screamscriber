@@ -193,6 +193,11 @@ misc:
     value: false
     type: bool
     description: "Set to true to play a noise after the transcription has been typed out."
+  live_preview:
+    value: true
+    type: bool
+    label: "Live transcription preview"
+    description: "Show live text in a drawer beneath the status window while recording. Re-transcribes the audio so far every ~350ms; only active on fast local engines (parakeet, mlx). Text may refine as more words are spoken."
 
 # HTTP API server settings (OpenAI-compatible)
 api_server:

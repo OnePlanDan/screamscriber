@@ -67,11 +67,15 @@ class StatusWindow(BaseWindow):
     statusSignal = pyqtSignal(str)
     closeSignal = pyqtSignal()
 
+    STATUS_HEIGHT = 90       # collapsed height (status row only)
+    DRAWER_MIN = 34          # drawer height for a single line of live text
+    DRAWER_MAX = 120         # cap so long dictations don't grow without bound
+
     def __init__(self):
         """
         Initialize the status window.
         """
-        super().__init__('Screamscriber Status', 320, 90)
+        super().__init__('Screamscriber Status', 320, self.STATUS_HEIGHT)
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
         self.initStatusUI()
@@ -129,6 +133,16 @@ class StatusWindow(BaseWindow):
 
         self.main_layout.addLayout(status_layout)
 
+        # Live-transcription drawer: hidden until the first partial arrives,
+        # then expands beneath the status row.
+        self.drawer_label = QLabel('')
+        self.drawer_label.setWordWrap(True)
+        self.drawer_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.drawer_label.setFont(ui_font(9))
+        self.drawer_label.setStyleSheet("color: #202020; padding: 0 4px;")
+        self.drawer_label.hide()
+        self.main_layout.addWidget(self.drawer_label)
+
     def show(self):
         """
         Position the window in the center of the screen and show it.
@@ -175,14 +189,14 @@ class StatusWindow(BaseWindow):
         painter.setPen(Qt.NoPen)
         painter.drawPath(path)
 
-        # Draw spectrum bars over the full window, clipped to rounded rect
+        # Draw spectrum bars, confined to the top status strip so they never
+        # paint behind the drawer text when the window is expanded.
         if self.spectrum.active:
             painter.setClipPath(path)
             painter.setBrush(QColor(0, 0, 0))
             painter.setPen(Qt.NoPen)
 
-            w = self.width()
-            h = self.height()
+            h = self.STATUS_HEIGHT
             n = SpectrumData.NUM_BANDS
             bar_w = 1.0
             step = 2.0  # 1px bar + 1px gap
@@ -195,6 +209,11 @@ class StatusWindow(BaseWindow):
                 x = i * step
                 painter.drawRect(QRectF(x, h - bar_h, bar_w, bar_h))
 
+        # Divider between the status strip and the open drawer.
+        if self.drawer_label.isVisible():
+            painter.setPen(QColor(0, 0, 0, 30))
+            painter.drawLine(12, self.STATUS_HEIGHT, self.width() - 12, self.STATUS_HEIGHT)
+
         painter.end()
 
     @pyqtSlot(list)
@@ -205,6 +224,28 @@ class StatusWindow(BaseWindow):
         self.spectrum.set_levels(levels)
 
     @pyqtSlot(str)
+    def showPartial(self, text):
+        """Display live partial transcription text, expanding the drawer."""
+        if not text:
+            return
+        self.drawer_label.setText(text)
+        if not self.drawer_label.isVisible():
+            self.drawer_label.show()
+        needed = self.drawer_label.heightForWidth(self.width() - 24)
+        if needed <= 0:
+            needed = self.DRAWER_MIN
+        drawer_h = max(self.DRAWER_MIN, min(self.DRAWER_MAX, needed + 12))
+        self.setFixedSize(self.width(), self.STATUS_HEIGHT + drawer_h)
+        self.update()
+
+    def resetDrawer(self):
+        """Collapse the drawer back to the status-only height."""
+        self.drawer_label.clear()
+        self.drawer_label.hide()
+        self.setFixedSize(self.width(), self.STATUS_HEIGHT)
+        self.update()
+
+    @pyqtSlot(str)
     def updateStatus(self, status):
         """
         Update the status window based on the given status.
@@ -213,14 +254,17 @@ class StatusWindow(BaseWindow):
             self.icon_label.setPixmap(self.microphone_pixmap)
             self.status_label.setText('Recording...')
             self.spectrum.reset()
+            self.resetDrawer()  # start each recording collapsed and empty
             self.show()
         elif status == 'transcribing':
             self.icon_label.setPixmap(self.pencil_pixmap)
             self.status_label.setText('Transcribing...')
             self.spectrum.reset()
+            # keep the last partial text visible while the final pass runs
 
         if status in ('idle', 'error', 'cancel'):
             self.spectrum.reset()
+            self.resetDrawer()
             self.close()
 
 
