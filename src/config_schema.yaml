@@ -4,11 +4,12 @@ model_options:
     value: faster-whisper
     type: str
     label: "Inference engine"
-    description: "Which engine to use. 'api' calls a remote OpenAI-compatible service. 'faster-whisper' uses CTranslate2 locally (CPU on Mac, GPU on Linux/Win with CUDA). 'mlx' uses Apple's MLX framework for native Apple Silicon GPU + Neural Engine."
+    description: "Which engine to use. 'api' calls a remote OpenAI-compatible service. 'faster-whisper' uses CTranslate2 locally (CPU on Mac, GPU on Linux/Win with CUDA). 'mlx' uses Apple's MLX framework for native Apple Silicon GPU + Neural Engine. 'parakeet' runs NVIDIA's Parakeet TDT via MLX on Apple Silicon — much faster than Whisper, 25 European languages with auto-detection."
     options:
       - api
       - faster-whisper
       - mlx
+      - parakeet
   use_api:
     value: false
     type: bool
@@ -103,6 +104,13 @@ model_options:
       value: mlx-community/whisper-large-v3-turbo
       type: str
       description: "HuggingFace repo for the MLX-converted Whisper model. Other options include 'mlx-community/whisper-large-v3' and 'mlx-community/whisper-medium'."
+
+  # Configuration options for the parakeet-mlx engine (Apple Silicon native)
+  parakeet:
+    model:
+      value: mlx-community/parakeet-tdt-0.6b-v3
+      type: str
+      description: "HuggingFace repo for the MLX-converted NVIDIA Parakeet model. TDT v3 covers 25 European languages (Swedish included) with automatic language detection. The 'common' options (language, initial_prompt, temperature) are not used by this engine."
 
 # Configuration options for activation and recording
 recording_options:

@@ -199,6 +199,29 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
                                 for w in s['words']
                             ]
                         response_data['segments'].append(seg)
+            elif engine == 'parakeet':
+                from parakeet_engine import transcribe_parakeet_full, tokens_to_words
+                result = transcribe_parakeet_full(audio_data, model=self.local_model,
+                                                  sample_rate=16000)
+                text = result.text
+                if verbose:
+                    response_data = {
+                        'text': text.strip(),
+                        'language': language or '',
+                        'duration': duration,
+                        'segments': [],
+                    }
+                    for i, s in enumerate(result.sentences):
+                        seg = {
+                            'id': i,
+                            'start': s.start,
+                            'end': s.end,
+                            'text': s.text,
+                            'no_speech_prob': 0.0,
+                        }
+                        if want_words and s.tokens:
+                            seg['words'] = tokens_to_words(s.tokens)
+                        response_data['segments'].append(seg)
             else:
                 segments, info = self.local_model.transcribe(**transcribe_kwargs)
                 segment_list = list(segments)

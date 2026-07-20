@@ -51,9 +51,17 @@ class SettingsWindow(BaseWindow):
         # Add Model Manager button to the Model Options tab
         model_tab = self.tabs.widget(0)  # First tab is Model Options
         if model_tab:
-            # Add current model info
-            current_model = ConfigManager.get_config_value('model_options', 'local', 'model') or 'base'
-            model_info_label = QLabel(f"Current Model: {current_model}")
+            # Add current model info for the active engine
+            from transcription import resolve_engine
+            engine = resolve_engine()
+            model_key = {
+                'faster-whisper': ('model_options', 'local', 'model'),
+                'mlx': ('model_options', 'mlx', 'model'),
+                'parakeet': ('model_options', 'parakeet', 'model'),
+                'api': ('model_options', 'api', 'model'),
+            }[engine]
+            current_model = ConfigManager.get_config_value(*model_key) or 'base'
+            model_info_label = QLabel(f"Current Model: {current_model}  (engine: {engine})")
             model_info_label.setStyleSheet("font-weight: bold; color: #2196F3; margin: 10px 0;")
             model_tab.layout().addWidget(model_info_label)
             

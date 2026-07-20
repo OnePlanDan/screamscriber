@@ -18,20 +18,26 @@ class ModelDownloadThread(QThread):
     progress = pyqtSignal(str)
     finished = pyqtSignal(bool, str)  # success, message
     
-    def __init__(self, model_name):
+    def __init__(self, model_name, engine='faster-whisper'):
         super().__init__()
         self.model_name = model_name
-        
+        self.engine = engine
+
     def run(self):
         try:
             self.progress.emit(f"Downloading {self.model_name}...")
-            
-            # Import here to avoid issues if faster-whisper isn't available
-            from faster_whisper import WhisperModel
-            
-            # This will trigger the download
-            model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
-            
+
+            if self.engine == 'faster-whisper':
+                # Import here to avoid issues if faster-whisper isn't available
+                from faster_whisper import WhisperModel
+
+                # This will trigger the download
+                model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
+            else:
+                # mlx / parakeet models are plain HuggingFace repos
+                from huggingface_hub import snapshot_download
+                snapshot_download(self.model_name)
+
             self.progress.emit(f"Download completed for {self.model_name}")
             self.finished.emit(True, f"Successfully downloaded {self.model_name}")
             
@@ -49,33 +55,34 @@ class ModelManagerWindow(BaseWindow):
     def init_ui(self):
         """Initialize the user interface."""
         # Title
-        title_label = QLabel("Whisper Model Manager")
+        title_label = QLabel("Model Manager")
         title_label.setFont(QFont("Arial", 16, QFont.Bold))
         title_label.setAlignment(Qt.AlignCenter)
         self.main_layout.addWidget(title_label)
-        
+
         # Description
-        desc_label = QLabel("Manage your local Whisper models. Download new models or remove existing ones.")
+        desc_label = QLabel("Manage your local speech models. Selecting a model also switches to its engine.")
         desc_label.setAlignment(Qt.AlignCenter)
         desc_label.setStyleSheet("color: gray; margin-bottom: 10px;")
         self.main_layout.addWidget(desc_label)
-        
+
         # Model table
         self.model_table = QTableWidget()
-        self.model_table.setColumnCount(7)
+        self.model_table.setColumnCount(8)
         self.model_table.setHorizontalHeaderLabels([
-            "Model Name", "Size", "Status", "Location", "Select", "Download", "Delete"
+            "Model Name", "Engine", "Size", "Status", "Location", "Select", "Download", "Delete"
         ])
-        
+
         # Set column widths
         header = self.model_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # Model name
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Size
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Status
-        header.setSectionResizeMode(3, QHeaderView.Stretch)  # Location
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Select
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Download
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Delete
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Engine
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Size
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(4, QHeaderView.Stretch)  # Location
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Select
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Download
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Delete
         
         self.main_layout.addWidget(self.model_table)
         
@@ -102,14 +109,48 @@ class ModelManagerWindow(BaseWindow):
         
         self.main_layout.addLayout(button_layout)
         
+    # Per-engine config location of the active model name
+    ENGINE_MODEL_KEYS = {
+        'faster-whisper': ('model_options', 'local', 'model'),
+        'mlx': ('model_options', 'mlx', 'model'),
+        'parakeet': ('model_options', 'parakeet', 'model'),
+    }
+
     def get_available_models(self):
-        """Get list of available Whisper models."""
+        """Get list of available faster-whisper models."""
         return [
             "tiny", "tiny.en", "base", "base.en", "small", "small.en",
             "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3",
             "large-v3-turbo", "distil-large-v2", "distil-large-v3"
         ]
-    
+
+    def get_model_registry(self):
+        """All selectable models across engines.
+
+        Each entry: name (config value / HF repo), engine, size_mb
+        (estimate shown before download), folder (HF cache dir pattern).
+        """
+        sizes = self.get_model_sizes()
+        folders = self.get_faster_whisper_folders()
+        registry = [
+            {'name': name, 'engine': 'faster-whisper',
+             'size_mb': sizes.get(name, 'Unknown'), 'folder': folders.get(name)}
+            for name in self.get_available_models()
+        ]
+        for repo, size_mb in [
+            ('mlx-community/whisper-large-v3-turbo', 1620),
+            ('mlx-community/whisper-large-v3', 3100),
+        ]:
+            registry.append({'name': repo, 'engine': 'mlx', 'size_mb': size_mb,
+                             'folder': 'models--' + repo.replace('/', '--')})
+        for repo, size_mb in [
+            ('mlx-community/parakeet-tdt-0.6b-v3', 1200),
+        ]:
+            registry.append({'name': repo, 'engine': 'parakeet', 'size_mb': size_mb,
+                             'folder': 'models--' + repo.replace('/', '--')})
+        return registry
+
+
     def get_model_sizes(self):
         """Get approximate sizes for models in MB."""
         return {
@@ -137,12 +178,9 @@ class ModelManagerWindow(BaseWindow):
         cache_dir = os.path.join(home_dir, ".cache", "huggingface", "hub")
         return cache_dir
     
-    def is_model_downloaded(self, model_name):
-        """Check if a model is downloaded."""
-        cache_dir = self.get_models_directory()
-        
-        # Map model names to their folder patterns
-        model_folder_patterns = {
+    def get_faster_whisper_folders(self):
+        """Map faster-whisper model names to their HF cache folder patterns."""
+        return {
             "tiny": "models--Systran--faster-whisper-tiny",
             "tiny.en": "models--Systran--faster-whisper-tiny.en",
             "base": "models--Systran--faster-whisper-base",
@@ -159,11 +197,17 @@ class ModelManagerWindow(BaseWindow):
             "distil-large-v2": "models--Systran--faster-distil-whisper-large-v2",
             "distil-large-v3": "models--Systran--faster-distil-whisper-large-v3"
         }
-        
-        folder_pattern = model_folder_patterns.get(model_name)
-        if not folder_pattern:
+
+    def is_model_downloaded(self, model_name):
+        """Check if a model is downloaded (any engine)."""
+        cache_dir = self.get_models_directory()
+
+        entry = next((e for e in self.get_model_registry()
+                      if e['name'] == model_name), None)
+        folder_pattern = entry['folder'] if entry else None
+        if not folder_pattern or not os.path.isdir(cache_dir):
             return False, None
-        
+
         # Look for the specific folder pattern
         for item in os.listdir(cache_dir):
             item_path = os.path.join(cache_dir, item)
@@ -194,26 +238,33 @@ class ModelManagerWindow(BaseWindow):
     def refresh_model_list(self):
         """Refresh the model list table."""
         self.model_table.setRowCount(0)
-        models = self.get_available_models()
-        sizes = self.get_model_sizes()
-        
-        # Get currently selected model
-        current_model = ConfigManager.get_config_value('model_options', 'local', 'model')
-        
-        for i, model_name in enumerate(models):
+        registry = self.get_model_registry()
+
+        # Currently active engine and its selected model
+        from transcription import resolve_engine
+        current_engine = resolve_engine()
+        current_model = ConfigManager.get_config_value(
+            *self.ENGINE_MODEL_KEYS.get(current_engine, self.ENGINE_MODEL_KEYS['faster-whisper']))
+
+        for i, entry in enumerate(registry):
+            model_name = entry['name']
             self.model_table.insertRow(i)
-            
+
             # Model name
             name_item = QTableWidgetItem(model_name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
             self.model_table.setItem(i, 0, name_item)
-            
+
+            # Engine
+            engine_item = QTableWidgetItem(entry['engine'])
+            engine_item.setFlags(engine_item.flags() & ~Qt.ItemIsEditable)
+            self.model_table.setItem(i, 1, engine_item)
+
             # Size
-            size_mb = sizes.get(model_name, "Unknown")
-            size_item = QTableWidgetItem(f"{size_mb} MB")
+            size_item = QTableWidgetItem(f"{entry['size_mb']} MB")
             size_item.setFlags(size_item.flags() & ~Qt.ItemIsEditable)
-            self.model_table.setItem(i, 1, size_item)
-            
+            self.model_table.setItem(i, 2, size_item)
+
             # Status
             is_downloaded, model_path = self.is_model_downloaded(model_name)
             if is_downloaded:
@@ -223,19 +274,20 @@ class ModelManagerWindow(BaseWindow):
                 status_item = QTableWidgetItem("Not Downloaded")
                 status_item.setBackground(Qt.lightGray)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
-            self.model_table.setItem(i, 2, status_item)
-            
+            self.model_table.setItem(i, 3, status_item)
+
             # Location
             if model_path:
                 location_item = QTableWidgetItem(os.path.dirname(model_path))
             else:
                 location_item = QTableWidgetItem("N/A")
             location_item.setFlags(location_item.flags() & ~Qt.ItemIsEditable)
-            self.model_table.setItem(i, 3, location_item)
-            
+            self.model_table.setItem(i, 4, location_item)
+
             # Select button
+            is_selected = (entry['engine'] == current_engine and model_name == current_model)
             if is_downloaded:
-                if model_name == current_model:
+                if is_selected:
                     select_btn = QPushButton("✓ Selected")
                     select_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
                 else:
@@ -245,47 +297,48 @@ class ModelManagerWindow(BaseWindow):
                 select_btn = QPushButton("Select")
                 select_btn.setEnabled(False)
                 select_btn.setStyleSheet("background-color: #cccccc; color: #666666;")
-            
-            select_btn.clicked.connect(lambda checked, name=model_name: self.select_model(name))
-            self.model_table.setCellWidget(i, 4, select_btn)
-            
+
+            select_btn.clicked.connect(lambda checked, e=entry: self.select_model(e))
+            self.model_table.setCellWidget(i, 5, select_btn)
+
             # Download button
             download_btn = QPushButton("Download" if not is_downloaded else "Re-download")
-            download_btn.clicked.connect(lambda checked, name=model_name: self.download_model(name))
-            self.model_table.setCellWidget(i, 5, download_btn)
-            
+            download_btn.clicked.connect(lambda checked, e=entry: self.download_model(e))
+            self.model_table.setCellWidget(i, 6, download_btn)
+
             # Delete button
             delete_btn = QPushButton("Delete")
             delete_btn.setEnabled(is_downloaded)
             delete_btn.clicked.connect(lambda checked, name=model_name: self.delete_model(name))
-            self.model_table.setCellWidget(i, 6, delete_btn)
+            self.model_table.setCellWidget(i, 7, delete_btn)
     
-    def download_model(self, model_name):
+    def download_model(self, entry):
         """Download a model."""
+        model_name = entry['name']
         if model_name in self.download_threads and self.download_threads[model_name].isRunning():
-            QMessageBox.information(self, "Download in Progress", 
+            QMessageBox.information(self, "Download in Progress",
                                   f"Download of {model_name} is already in progress.")
             return
-        
-        reply = QMessageBox.question(self, "Download Model", 
+
+        reply = QMessageBox.question(self, "Download Model",
                                    f"Download {model_name}? This may take several minutes.",
                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        
+
         if reply == QMessageBox.Yes:
             # Create and start download thread
-            download_thread = ModelDownloadThread(model_name)
+            download_thread = ModelDownloadThread(model_name, engine=entry['engine'])
             download_thread.progress.connect(lambda msg: self.update_download_progress(model_name, msg))
             download_thread.finished.connect(lambda success, msg: self.download_finished(model_name, success, msg))
-            
+
             self.download_threads[model_name] = download_thread
             download_thread.start()
-            
+
             # Update button to show progress
             for i in range(self.model_table.rowCount()):
                 if self.model_table.item(i, 0).text() == model_name:
                     progress_btn = QPushButton("Downloading...")
                     progress_btn.setEnabled(False)
-                    self.model_table.setCellWidget(i, 5, progress_btn)
+                    self.model_table.setCellWidget(i, 6, progress_btn)
                     break
     
     def update_download_progress(self, model_name, message):
@@ -293,15 +346,19 @@ class ModelManagerWindow(BaseWindow):
         # Could be enhanced with actual progress bar
         pass
     
-    def select_model(self, model_name):
-        """Select a model for use."""
-        ConfigManager.set_config_value(model_name, 'model_options', 'local', 'model')
+    def select_model(self, entry):
+        """Select a model (and its engine) for use."""
+        model_name = entry['name']
+        engine = entry['engine']
+        ConfigManager.set_config_value(model_name, *self.ENGINE_MODEL_KEYS[engine])
+        ConfigManager.set_config_value(engine, 'model_options', 'engine')
         ConfigManager.save_config()
-        
-        QMessageBox.information(self, "Model Selected", 
-                              f"{model_name} has been selected as the active model.\n\n"
+
+        QMessageBox.information(self, "Model Selected",
+                              f"{model_name} has been selected as the active model "
+                              f"(engine: {engine}).\n\n"
                               "The change will take effect when you restart Screamscriber.")
-        
+
         # Refresh the table to update the selection indicators
         self.refresh_model_list()
 
