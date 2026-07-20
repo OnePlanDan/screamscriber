@@ -145,7 +145,7 @@ class ScreamScriberApp(QObject):
 
         from transcription import resolve_engine
         if resolve_engine() == 'api':
-            ConfigManager.console_print('API server requires a local engine (faster-whisper or mlx)')
+            ConfigManager.console_print('API server requires a local engine (faster-whisper, mlx, or parakeet)')
             return
 
         # Eagerly load the model for the API server

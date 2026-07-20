@@ -6,6 +6,7 @@ from openai import OpenAI
 
 from utils import ConfigManager
 from mlx_engine import create_mlx_model, transcribe_mlx
+from parakeet_engine import create_parakeet_model, transcribe_parakeet
 
 
 def resolve_engine():
@@ -17,7 +18,7 @@ def resolve_engine():
     """
     model_options = ConfigManager.get_config_section('model_options') or {}
     engine = model_options.get('engine')
-    if engine in {'api', 'faster-whisper', 'mlx'}:
+    if engine in {'api', 'faster-whisper', 'mlx', 'parakeet'}:
         return engine
     return 'api' if model_options.get('use_api') else 'faster-whisper'
 
@@ -28,10 +29,13 @@ def create_local_model():
 
     For faster-whisper this is an eager WhisperModel load.
     For mlx this is just the repo string (MLX loads lazily).
+    For parakeet this is an eager parakeet-mlx model load.
     """
     engine = resolve_engine()
     if engine == 'mlx':
         return create_mlx_model()
+    if engine == 'parakeet':
+        return create_parakeet_model()
     if engine == 'api':
         return None
 
@@ -132,7 +136,7 @@ def post_process_transcription(transcription):
 
 def transcribe(audio_data, local_model=None):
     """
-    Transcribe audio using the active engine: api, faster-whisper, or mlx.
+    Transcribe audio using the active engine: api, faster-whisper, mlx, or parakeet.
     """
     if audio_data is None:
         return ''
@@ -142,6 +146,8 @@ def transcribe(audio_data, local_model=None):
         transcription = transcribe_api(audio_data)
     elif engine == 'mlx':
         transcription = transcribe_mlx(audio_data, repo=local_model)
+    elif engine == 'parakeet':
+        transcription = transcribe_parakeet(audio_data, model=local_model)
     else:
         transcription = transcribe_local(audio_data, local_model)
 
