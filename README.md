@@ -14,6 +14,10 @@ Screamscriber can host an OpenAI-compatible transcription API, so other apps or 
 
 See the [API Documentation](./assets/api_docs.html) for endpoints, examples, and chaining setup.
 
+## The Beep
+
+Once, this app hummed its own thoughts into its own microphone — and it took a human ear and a machine's spectrogram together to catch it. Read [the story of the beep](./docs/the-beep.md).
+
 ## Credits
 
 - [savbell](https://github.com/savbell) for creating the original [WhisperWriter](https://github.com/savbell/whisper-writer) project.
