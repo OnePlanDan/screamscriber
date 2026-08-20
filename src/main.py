@@ -1,7 +1,9 @@
 import _macos_fix  # noqa: F401  -- patch pynput before it loads
+import json
 import os
 import sys
 import time
+import traceback
 
 # Run as a macOS "accessory" app (no Dock icon, no app menu bar). This is the
 # right activation policy for a hotkey-driven background tool — same pattern
@@ -28,14 +30,27 @@ def _save_frontmost_app():
         return None
 
 
-def _restore_frontmost_app(app_ref):
-    """Re-activate a previously saved macOS app and give it a moment to focus."""
-    if app_ref is None:
-        return
+def _frontmost_app():
+    """Current macOS frontmost app, or None off-macOS / on failure."""
+    if sys.platform != 'darwin':
+        return None
+    try:
+        from AppKit import NSWorkspace
+        return NSWorkspace.sharedWorkspace().frontmostApplication()
+    except Exception:
+        return None
+
+
+def _activate_and_wait(app_ref):
+    """Bring a saved app frontmost and poll until the activation lands."""
     try:
         # NSApplicationActivateIgnoringOtherApps = 1 << 1 = 2
         app_ref.activateWithOptions_(2)
-        time.sleep(0.05)
+        for _ in range(20):
+            time.sleep(0.025)
+            front = _frontmost_app()
+            if front and front.processIdentifier() == app_ref.processIdentifier():
+                break
     except Exception:
         pass
 try:
@@ -111,7 +126,33 @@ class ScreamScriberApp(QObject):
         self.api_server = None
         self.start_api_server()
 
+        self._warm_preview_model()
+
         self._setup_config_watcher()
+
+    def _warm_preview_model(self):
+        """Load the Parakeet model that powers the streaming live preview.
+
+        Only needed in 'streaming' preview mode ('batch' reuses the active
+        engine's model). Runs eagerly on the main thread — MLX weight
+        evaluation must not happen first on a worker thread (see
+        parakeet_engine note). Shares the main model when the parakeet
+        engine is selected for final text.
+        """
+        from result_thread import live_preview_mode
+        if live_preview_mode() != 'streaming':
+            return
+        try:
+            from transcription import resolve_engine, create_local_model
+            from parakeet_engine import warm_preview_model
+            if resolve_engine() == 'parakeet':
+                if self.local_model is None:
+                    self.local_model = create_local_model()
+                warm_preview_model(self.local_model)
+            else:
+                warm_preview_model()
+        except Exception:
+            traceback.print_exc()
 
     def _setup_config_watcher(self):
         """Hot-reload settings when src/config.yaml is edited on disk."""
@@ -235,6 +276,9 @@ class ScreamScriberApp(QObject):
         # Clear model to force reload on next use with new settings
         self.local_model = None
 
+        # Re-warm in case live_preview was just enabled (no-op if already loaded)
+        self._warm_preview_model()
+
     def on_activation(self):
         """
         Called when the activation key combination is pressed.
@@ -264,9 +308,11 @@ class ScreamScriberApp(QObject):
         if self.result_thread and self.result_thread.isRunning():
             return
 
-        # Capture the app the user was focused on at hotkey-press time so we
-        # can re-focus it before typing — the StatusWindow appearing would
-        # otherwise steal focus and the keystrokes would land nowhere.
+        self._cancel_held_delivery()
+
+        # Capture the app the user was focused on at hotkey-press time — this
+        # is the intended typing target that post_processing.focus_policy
+        # enforces if focus moves during the recording.
         self._saved_frontmost = _save_frontmost_app()
 
         # Lazy-load the local model on first use
@@ -292,18 +338,104 @@ class ScreamScriberApp(QObject):
 
     def on_transcription_complete(self, result):
         """
-        When the transcription is complete, type the result and start listening for the activation key again.
+        When the transcription is complete, log it, deliver it according to
+        the focus policy, and start listening for the activation key again.
         """
-        _restore_frontmost_app(getattr(self, '_saved_frontmost', None))
-        self.input_simulator.typewrite(result)
+        self._log_transcription(result)
+        delivered = self._deliver_transcription(result)
 
-        if ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:
+        if delivered and ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:
             AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=True)
 
         if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'continuous':
             self.start_result_thread()
         else:
             self.key_listener.start()
+
+    def _log_transcription(self, text):
+        """Append the raw transcription to a local, gitignored JSONL log."""
+        if not text or not ConfigManager.get_config_value('misc', 'transcription_log'):
+            return
+        try:
+            saved = getattr(self, '_saved_frontmost', None)
+            entry = {
+                'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'app': saved.localizedName() if saved is not None else None,
+                'text': text,
+            }
+            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'transcription_log.jsonl')
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        except Exception:
+            traceback.print_exc()
+
+    def _deliver_transcription(self, result):
+        """Type the transcription according to post_processing.focus_policy.
+
+        Returns True if the text was typed now, False if it is being held
+        (or was empty). The press-time frontmost app is the user's intended
+        target; the policy decides what to do when focus moved meanwhile.
+        """
+        if not result:
+            return False
+        policy = ConfigManager.get_config_value('post_processing', 'focus_policy') or 'return_to_origin'
+        saved = getattr(self, '_saved_frontmost', None)
+        current = _frontmost_app()
+        if saved is None or current is None:
+            self.input_simulator.typewrite(result)
+            return True
+        if current.processIdentifier() == os.getpid():
+            # One of our own windows took focus — always give it back first.
+            _activate_and_wait(saved)
+            self.input_simulator.typewrite(result)
+            return True
+        if current.processIdentifier() == saved.processIdentifier() or policy == 'follow_focus':
+            self.input_simulator.typewrite(result)
+            return True
+        if policy == 'return_to_origin':
+            ConfigManager.console_print(
+                f'Focus moved to {current.localizedName()} during recording — '
+                f'returning to {saved.localizedName()} before typing.')
+            _activate_and_wait(saved)
+            self.input_simulator.typewrite(result)
+            return True
+        # hold_if_changed: wait for the user to refocus the original app.
+        self._held_text = result
+        self._held_target = saved
+        self._hold_deadline = time.monotonic() + 60
+        if not hasattr(self, '_hold_timer'):
+            self._hold_timer = QTimer(self)
+            self._hold_timer.setInterval(500)
+            self._hold_timer.timeout.connect(self._check_held_delivery)
+        self._hold_timer.start()
+        ConfigManager.console_print(
+            f'Focus moved to {current.localizedName()} during recording — holding text '
+            f'until {saved.localizedName()} is focused again (60 s; text is in the log either way).')
+        return False
+
+    def _check_held_delivery(self):
+        front = _frontmost_app()
+        if front and self._held_target is not None \
+                and front.processIdentifier() == self._held_target.processIdentifier():
+            self._hold_timer.stop()
+            text = self._held_text
+            self._held_text = None
+            self._held_target = None
+            self.input_simulator.typewrite(text)
+            return
+        if time.monotonic() > self._hold_deadline:
+            self._hold_timer.stop()
+            self._held_text = None
+            self._held_target = None
+            ConfigManager.console_print('Held text expired undelivered — it remains in the transcription log.')
+
+    def _cancel_held_delivery(self):
+        if getattr(self, '_hold_timer', None) is not None and self._hold_timer.isActive():
+            self._hold_timer.stop()
+            self._held_text = None
+            self._held_target = None
+            ConfigManager.console_print('New recording started — canceled held text (still in the transcription log).')
 
     def run(self):
         """

@@ -151,6 +151,11 @@ recording_options:
     value: 100
     type: int
     description: "The minimum duration in milliseconds for a recording to be processed. Recordings shorter than this will be discarded."
+  min_speech_duration:
+    value: 200
+    type: int
+    label: "Minimum speech to transcribe (ms)"
+    description: "Discard recordings containing less than this many milliseconds of voice-activity-detected speech, instead of letting the model hallucinate on silence ('Thank you.'). Set 0 to disable the check."
 
 # Post-processing options for the transcribed text
 post_processing:
@@ -178,6 +183,15 @@ post_processing:
       - pynput
       - ydotool
       - dotool
+  focus_policy:
+    value: return_to_origin
+    type: str
+    label: "Where to type when focus changed"
+    description: "What to do when another window has taken focus between pressing the record key and typing (macOS only). 'return_to_origin' re-activates the window you started recording in and types there. 'follow_focus' types into whatever is focused now. 'hold_if_changed' types nothing until you refocus the original window yourself (gives up after 60 s; the text stays in the transcription log)."
+    options:
+      - return_to_origin
+      - follow_focus
+      - hold_if_changed
 
 # Miscellaneous settings
 misc:
@@ -194,10 +208,24 @@ misc:
     type: bool
     description: "Set to true to play a noise after the transcription has been typed out."
   live_preview:
+    value: batch
+    type: str
+    label: "Live transcription preview"
+    description: "Show live text in a drawer beneath the status window while recording. 'batch' re-transcribes the whole buffer on an interval with your selected engine (preview matches the final text, but the periodic GPU spikes can cause audible coil whine on some laptops; needs a fast local engine — parakeet or mlx). 'streaming' feeds audio continuously into a Parakeet rolling context (steady light GPU load, no rhythmic whine; preview always uses Parakeet regardless of the selected engine, so wording may differ slightly from the final text)."
+    options:
+      - "off"
+      - batch
+      - streaming
+  live_preview_interval:
+    value: 0.35
+    type: float
+    label: "Batch preview refresh interval"
+    description: "Seconds between re-transcriptions in 'batch' preview mode. Longer intervals mean fewer (but not quieter) GPU spikes and a less lively drawer. Ignored in 'streaming' mode, which paces itself."
+  transcription_log:
     value: true
     type: bool
-    label: "Live transcription preview"
-    description: "Show live text in a drawer beneath the status window while recording. Re-transcribes the audio so far every ~350ms; only active on fast local engines (parakeet, mlx). Text may refine as more words are spoken."
+    label: "Transcription log"
+    description: "Append every final transcription (timestamp, target app, raw text) to transcription_log.jsonl in the project root. The file is local and gitignored; useful for searching what you have dictated. Held or superseded text is still logged even when it is never typed."
 
 # HTTP API server settings (OpenAI-compatible)
 api_server:

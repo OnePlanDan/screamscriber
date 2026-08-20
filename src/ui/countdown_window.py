@@ -11,7 +11,7 @@ from PyQt5.QtGui import QFont, QCursor
 from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from ui.base_window import BaseWindow
+from ui.base_window import BaseWindow, frontmost_app, give_back_focus, keep_visible_when_inactive
 
 
 def _truncate(text, limit=80):
@@ -112,8 +112,11 @@ class CountdownWindow(BaseWindow):
         self.hint_label.setStyleSheet('color: #808080;')
 
         self._position_center()
+        keep_visible_when_inactive(self)
+        prev = frontmost_app()  # showing steals app activation on macOS 26 — give it back
         self.show()
         self.raise_()
+        give_back_focus(prev)
         if self._remaining > 0:
             self._timer.start()
 

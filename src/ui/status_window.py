@@ -5,7 +5,7 @@ from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QBrush, QColor, QPainte
 from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from ui.base_window import BaseWindow, ui_font
+from ui.base_window import BaseWindow, ui_font, frontmost_app, give_back_focus, keep_visible_when_inactive
 
 
 class SpectrumData(QObject):
@@ -80,6 +80,13 @@ class StatusWindow(BaseWindow):
         self.spectrum.updated.connect(self.update)
         self.initStatusUI()
         self.statusSignal.connect(self.updateStatus)
+        # Delay showing so a quick tap of the hotkey never materializes a
+        # window at all — showing+closing within ~100ms disturbs the focus
+        # of the window the user is working in.
+        self._show_timer = QTimer(self)
+        self._show_timer.setSingleShot(True)
+        self._show_timer.setInterval(200)
+        self._show_timer.timeout.connect(self.show)
 
     def initStatusUI(self):
         """
@@ -158,8 +165,11 @@ class StatusWindow(BaseWindow):
         y = screen_geometry.y() + (screen_height - window_height) // 2
 
         self.move(x, y)
+        keep_visible_when_inactive(self)
+        prev = frontmost_app()  # showing steals app activation on macOS 26 — give it back
         super().show()
         self.raise_()
+        give_back_focus(prev)
 
     def closeEvent(self, event):
         """
@@ -255,7 +265,7 @@ class StatusWindow(BaseWindow):
             self.status_label.setText('Recording...')
             self.spectrum.reset()
             self.resetDrawer()  # start each recording collapsed and empty
-            self.show()
+            self._show_timer.start()
         elif status == 'transcribing':
             self.icon_label.setPixmap(self.pencil_pixmap)
             self.status_label.setText('Transcribing...')
@@ -263,9 +273,12 @@ class StatusWindow(BaseWindow):
             # keep the last partial text visible while the final pass runs
 
         if status in ('idle', 'error', 'cancel'):
+            self._show_timer.stop()
             self.spectrum.reset()
             self.resetDrawer()
-            self.close()
+            # hide, don't close — closing the window is what can shuffle
+            # macOS key focus away from the window being dictated into
+            self.hide()
 
 
 if __name__ == '__main__':

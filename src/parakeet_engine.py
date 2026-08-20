@@ -34,6 +34,38 @@ def create_parakeet_model():
     return model
 
 
+_preview_model = None
+
+
+def warm_preview_model(shared_model=None):
+    """Load (or adopt) the Parakeet model that powers the streaming live preview.
+
+    The live preview always streams through Parakeet regardless of which
+    engine produces the final text — parakeet-mlx is the only local engine
+    with true incremental streaming (transcribe_stream). When the main
+    engine IS parakeet, pass its model as `shared_model` to avoid loading
+    the weights twice.
+
+    Must be called on the main thread before any preview runs: MLX raises
+    "There is no Stream(gpu, 0) in current thread" if weights first
+    evaluate on a worker thread (same note as create_parakeet_model).
+    """
+    global _preview_model
+    if shared_model is not None:
+        _preview_model = shared_model
+    elif _preview_model is None:
+        _preview_model = create_parakeet_model()
+    return _preview_model
+
+
+def preview_model_ready():
+    return _preview_model is not None
+
+
+def get_preview_model():
+    return _preview_model
+
+
 def _to_float32(audio_data):
     """Accept int16 or float32 numpy; return float32 in [-1, 1]."""
     if audio_data.dtype == np.int16:
