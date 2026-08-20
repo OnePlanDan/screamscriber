@@ -12,10 +12,27 @@ from threading import Event, Thread
 from transcription import transcribe, resolve_engine
 from utils import ConfigManager
 
-# Engines fast enough to re-transcribe the buffer live during recording.
-LIVE_PREVIEW_ENGINES = {'parakeet', 'mlx'}
-PARTIAL_INTERVAL_S = 0.35   # how often to refresh the live text
-PARTIAL_MIN_S = 0.3         # don't transcribe until this much audio exists
+# Live preview modes (misc.live_preview): 'batch' re-transcribes the whole
+# buffer with the active engine on an interval — preview matches the model
+# that types the final text, but the periodic GPU spikes can make laptop
+# power circuitry coil-whine audibly. 'streaming' feeds new samples straight
+# into parakeet-mlx transcribe_stream as they arrive — near-continuous light
+# GPU load with no rhythm, but the preview model is always Parakeet.
+PARTIAL_MIN_S = 0.3   # batch: don't transcribe until this much audio exists
+
+
+def live_preview_mode():
+    """Resolve misc.live_preview to 'off' | 'batch' | 'streaming'.
+
+    Accepts legacy booleans from old configs: true was the original
+    batch behavior, false was off.
+    """
+    value = ConfigManager.get_config_value('misc', 'live_preview')
+    if value is True:
+        return 'batch'
+    if value in ('off', 'batch', 'streaming'):
+        return value
+    return 'off'
 
 
 class ResultThread(QThread):
@@ -88,6 +105,13 @@ class ResultThread(QThread):
                 self.statusSignal.emit('idle')
                 return
 
+            # Whisper hallucinates on silence ("Thank you.", "you", ...), so
+            # refuse to transcribe recordings that contain no actual speech.
+            if not self._has_speech(audio_data):
+                ConfigManager.console_print('Discarded: no speech detected in recording.')
+                self.statusSignal.emit('idle')
+                return
+
             self.statusSignal.emit('transcribing')
             ConfigManager.console_print('Transcribing...')
 
@@ -113,24 +137,40 @@ class ResultThread(QThread):
             self.stop_recording()
 
     def _live_preview_enabled(self):
-        """Live text needs a fast local engine, a loaded model, and the toggle on."""
-        if self.local_model is None:
-            return False
-        if not ConfigManager.get_config_value('misc', 'live_preview'):
-            return False
-        return resolve_engine() in LIVE_PREVIEW_ENGINES
+        """Live text needs a mode selected and that mode's model available."""
+        mode = live_preview_mode()
+        if mode == 'batch':
+            # Batch re-transcribes with the active engine — only fast local
+            # engines can keep up with the refresh interval.
+            return self.local_model is not None and resolve_engine() in ('parakeet', 'mlx')
+        if mode == 'streaming':
+            try:
+                from parakeet_engine import preview_model_ready
+                return preview_model_ready()
+            except ImportError:
+                return False
+        return False
 
     def _partial_loop(self, recording):
-        """Re-transcribe the growing buffer periodically and emit partial text.
+        """Emit partial transcription text while recording.
 
-        Runs on its own thread while recording so the mic loop and MLX
-        inference never block each other. Reads `recording` (the same list the
-        record loop appends to) via a copy taken under the GIL. Stops before
-        the final transcription runs, so the two never hit the GPU at once.
+        Dispatches on the configured preview mode. Both variants run on
+        their own thread so the mic loop and inference never block each
+        other, read `recording` (the same list the record loop appends to)
+        via slice-copies taken under the GIL, and stop before the final
+        transcription runs, so the two never hit the GPU at once.
         """
+        if live_preview_mode() == 'streaming':
+            self._partial_loop_streaming(recording)
+        else:
+            self._partial_loop_batch(recording)
+
+    def _partial_loop_batch(self, recording):
+        """Re-transcribe the growing buffer with the active engine on an interval."""
+        interval = float(ConfigManager.get_config_value('misc', 'live_preview_interval') or 0.35)
         min_samples = int(PARTIAL_MIN_S * self.sample_rate)
         last_len = 0
-        while not self._partial_stop.wait(PARTIAL_INTERVAL_S):
+        while not self._partial_stop.wait(interval):
             if not (self.is_running and self.is_recording):
                 break
             snapshot = recording[:]  # atomic slice-copy; record loop keeps extending
@@ -144,6 +184,86 @@ class ResultThread(QThread):
                 continue
             if text and text.strip():
                 self.partialResultSignal.emit(text.strip())
+
+    def _partial_loop_streaming(self, recording):
+        """Feed new samples straight into Parakeet's rolling context.
+
+        No timer: whatever audio arrived since the last pass is fed as soon
+        as the previous inference finishes, so the pass rate is set by the
+        inference time itself and the GPU load stays near-continuous
+        (~60-100 ms per pass) instead of pulsing rhythmically.
+        """
+        import mlx.core as mx
+        from parakeet_engine import get_preview_model, _to_float32, _resample
+
+        model = get_preview_model()
+        if model is None:
+            return
+        dst_rate = model.preprocessor_config.sample_rate
+        # parakeet-mlx normalizes mel features PER add_audio CALL (get_logmel
+        # normalize='per_feature' uses the chunk's own mean/std), so small
+        # chunks feed the encoder statistically-distorted features and the
+        # text comes out garbled. Chunks of ~1 s and up are indistinguishable
+        # from offline transcription, so accumulate at least that much before
+        # each feed. (An absolute floor of ~105 ms also exists: fewer mel
+        # frames than one subsampling window crashes the encoder.)
+        min_src = max(1, int(1.0 * self.sample_rate))
+        fed = 0
+        last_text = ''
+        try:
+            # The context manager switches the encoder to local attention on
+            # entry and restores it on exit — when the preview shares the
+            # main engine's model, the final pass must not start before this
+            # block exits (the record loop joins this thread first).
+            with model.transcribe_stream() as stream:
+                while self.is_running and self.is_recording and not self._partial_stop.is_set():
+                    chunk = recording[fed:]  # atomic slice-copy; record loop keeps extending
+                    if len(chunk) < min_src:
+                        if self._partial_stop.wait(0.02):
+                            break
+                        continue
+                    fed += len(chunk)
+                    audio = _resample(_to_float32(np.array(chunk, dtype=np.int16)),
+                                      self.sample_rate, dst_rate)
+                    stream.add_audio(mx.array(audio))
+                    text = stream.result.text.strip()
+                    if text and text != last_text:
+                        last_text = text
+                        self.partialResultSignal.emit(text)
+        except Exception:
+            traceback.print_exc()
+
+    def _has_speech(self, audio_data):
+        """True if the recording contains at least min_speech_duration ms of
+        VAD-detected speech. Threshold 0 disables the gate."""
+        min_speech_ms = ConfigManager.get_config_value(
+            'recording_options', 'min_speech_duration')
+        if not min_speech_ms:
+            return True
+        # webrtcvad alone is too permissive — it flags breath and room noise
+        # as speech — so a frame only counts when it also clears an energy
+        # floor. Calibrated on real captures: true silence scores ~150 ms,
+        # normal dictation ~1400 ms, so the default 200 ms threshold splits
+        # them cleanly. (Whisper's own no_speech_prob is 0.0 even on breath
+        # it hallucinates "Thank you." for — measured, not usable.)
+        rms_floor = 0.015
+        vad = webrtcvad.Vad(3)
+        frame = int(self.sample_rate * 0.03)
+        speech_ms = 0
+        for i in range(0, len(audio_data) - frame + 1, frame):
+            f = audio_data[i:i + frame]
+            rms = np.sqrt(np.mean((f.astype(np.float32) / 32768.0) ** 2))
+            if rms < rms_floor:
+                continue
+            try:
+                if vad.is_speech(f.tobytes(), self.sample_rate):
+                    speech_ms += 30
+                    if speech_ms >= min_speech_ms:
+                        return True
+            except Exception:
+                # Unsupported rate/frame for webrtcvad — never block typing.
+                return True
+        return False
 
     def _record_audio(self):
         """
@@ -250,10 +370,12 @@ class ResultThread(QThread):
                         break
 
         # Stop the live-preview worker before the final transcription so the
-        # two never contend for the GPU. join waits out any in-flight pass.
+        # two never contend for the GPU — and, when the preview shares the
+        # main model, so transcribe_stream's context manager restores the
+        # encoder attention mode first. join waits out any in-flight pass.
         self._partial_stop.set()
         if partial_thread is not None:
-            partial_thread.join(timeout=1.0)
+            partial_thread.join(timeout=3.0)
 
         audio_data = np.array(recording, dtype=np.int16)
         duration = len(audio_data) / self.sample_rate

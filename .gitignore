@@ -130,3 +130,5 @@ dmypy.json
 
 # Configuration files
 config.yaml
+# Local dictation history (misc.transcription_log)
+transcription_log.jsonl
