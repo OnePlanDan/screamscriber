@@ -9,7 +9,7 @@
 Hold the key. Speak. Text appears. Wow.
 
 <p align="center">
-    <img src="./assets/demo.gif" alt="Screamscriber dictating text into an editor" width="800">
+    <img src="./assets/demo.gif" alt="Screamscriber dictating text into an editor" width="568">
 </p>
 
 ## API Server
