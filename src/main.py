@@ -58,7 +58,7 @@ try:
 except ImportError:
     AudioPlayer = None
 from pynput.keyboard import Controller
-from PyQt5.QtCore import QObject, QProcess, QFileSystemWatcher, QTimer
+from PyQt5.QtCore import QObject, QProcess, QFileSystemWatcher, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 
@@ -75,6 +75,13 @@ from utils import ConfigManager
 
 
 class ScreamScriberApp(QObject):
+    # KeyListener callbacks fire on the pynput/event-tap thread; route ALL
+    # GUI work through signals so it happens on the main thread. (Calling a
+    # widget method directly from the listener thread segfaults Qt — learned
+    # the hard way with begin_live_segment.)
+    shapingToggleSignal = pyqtSignal()
+    beginLiveSegmentSignal = pyqtSignal()
+
     def __init__(self):
         """
         Initialize the application, opening settings window if no configuration file is found.
@@ -104,6 +111,11 @@ class ScreamScriberApp(QObject):
         self.key_listener = KeyListener()
         self.key_listener.add_callback("on_activate", self.on_activation)
         self.key_listener.add_callback("on_deactivate", self.on_deactivation)
+        self.key_listener.add_callback("on_chord_space", self.shapingToggleSignal.emit)
+        self.shapingToggleSignal.connect(self._toggle_shaping)
+        self.beginLiveSegmentSignal.connect(self._begin_live_segment)
+        self.shaping_window = None
+        self._last_shaping_toggle = 0.0
 
         self.countdown_window = CountdownWindow()
         self.typing_gate = TypingGate(window=self.countdown_window, key_listener=self.key_listener)
@@ -327,6 +339,13 @@ class ScreamScriberApp(QObject):
             self.result_thread.partialResultSignal.connect(self.status_window.showPartial)
             self.status_window.closeSignal.connect(self.stop_result_thread)
         self.result_thread.resultSignal.connect(self.on_transcription_complete)
+        # Live feedback in the shaping window: the upcoming segment number
+        # appears immediately, its text streams in as it is spoken. Signal,
+        # not a direct call — this method runs on the key-listener thread.
+        self.result_thread.partialResultSignal.connect(self._on_partial_for_shaping)
+        self.result_thread.statusSignal.connect(self._on_status_for_shaping)
+        if self._shaping_active():
+            self.beginLiveSegmentSignal.emit()
         self.result_thread.start()
 
     def stop_result_thread(self):
@@ -338,19 +357,92 @@ class ScreamScriberApp(QObject):
 
     def on_transcription_complete(self, result):
         """
-        When the transcription is complete, log it, deliver it according to
-        the focus policy, and start listening for the activation key again.
+        When the transcription is complete, log it, then either stack it in
+        the shaping session or deliver it according to the focus policy, and
+        start listening for the activation key again.
         """
         self._log_transcription(result)
-        delivered = self._deliver_transcription(result)
 
-        if delivered and ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:
-            AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=True)
+        if self._shaping_active():
+            if result and result.strip():
+                self.shaping_window.receive_transcription(result.strip())
+        else:
+            delivered = self._deliver_transcription(result)
+            if delivered and ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:
+                AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=True)
 
         if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'continuous':
             self.start_result_thread()
         else:
             self.key_listener.start()
+
+    def _shaping_active(self):
+        return self.shaping_window is not None and self.shaping_window.session is not None
+
+    def _begin_live_segment(self):
+        if self._shaping_active():
+            self.shaping_window.begin_live_segment()
+
+    def _on_partial_for_shaping(self, text):
+        if self._shaping_active():
+            self.shaping_window.show_live_partial(text)
+
+    def _on_status_for_shaping(self, status):
+        # A recording that produced no segment (silence, cancel) leaves no row.
+        if status in ('idle', 'error', 'cancel') and self._shaping_active():
+            self.shaping_window.clear_live_partial()
+
+    def _toggle_shaping(self):
+        """Space pressed while holding the activation key (on the main thread)."""
+        now = time.monotonic()
+        if now - self._last_shaping_toggle < 0.5:  # key-repeat / double-fire guard
+            return
+        self._last_shaping_toggle = now
+
+        if self._shaping_active():
+            self.on_shaping_cancel()
+            return
+
+        if self.shaping_window is None:
+            from ui.shaping_window import ShapingWindow
+            self.shaping_window = ShapingWindow()
+            self.shaping_window.deliverRequested.connect(self.on_shaping_deliver)
+            self.shaping_window.cancelled.connect(self.on_shaping_cancel)
+
+        # The recording in progress right now started from the user's real
+        # target window — that's where Enter will eventually type.
+        origin = getattr(self, '_saved_frontmost', None)
+        self.shaping_window.start_session(origin)
+        if hasattr(self, 'status_window'):
+            # Move the analyzer/preview overlay below the shaping window —
+            # immediately, since a recording is showing it right now.
+            self.status_window.y_offset = 280
+            self.status_window.reposition()
+        # The toggle happens mid-recording: that recording is segment 1.
+        self.shaping_window.begin_live_segment()
+        ConfigManager.console_print('Shaping mode ON — dictations now stack in the shaping box.')
+
+    def on_shaping_deliver(self, text):
+        origin = self.shaping_window.session.origin_app if self.shaping_window.session else None
+        self._end_shaping()
+        if origin is not None:
+            _activate_and_wait(origin)
+        if ConfigManager.get_config_value('post_processing', 'add_trailing_space'):
+            text += ' '
+        self.input_simulator.typewrite(text)
+        ConfigManager.console_print('Shaping mode OFF — shaped text delivered.')
+
+    def on_shaping_cancel(self):
+        origin = self.shaping_window.session.origin_app if self.shaping_window.session else None
+        self._end_shaping()
+        if origin is not None:
+            _activate_and_wait(origin)  # give focus back to where the session began
+        ConfigManager.console_print('Shaping mode OFF — cancelled, nothing typed (segments are in the log).')
+
+    def _end_shaping(self):
+        self.shaping_window.end_session()
+        if hasattr(self, 'status_window'):
+            self.status_window.y_offset = 0
 
     def _log_transcription(self, text):
         """Append the raw transcription to a local, gitignored JSONL log."""

@@ -76,6 +76,7 @@ class StatusWindow(BaseWindow):
         Initialize the status window.
         """
         super().__init__('Screamscriber Status', 320, self.STATUS_HEIGHT)
+        self.y_offset = 0  # shifted down while the shaping window is open
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
         self.initStatusUI()
@@ -150,21 +151,24 @@ class StatusWindow(BaseWindow):
         self.drawer_label.hide()
         self.main_layout.addWidget(self.drawer_label)
 
+    def _position(self):
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        screen_geometry = screen.geometry()
+        x = screen_geometry.x() + (screen_geometry.width() - self.width()) // 2
+        y = screen_geometry.y() + (screen_geometry.height() - self.height()) // 2 + self.y_offset
+
+        self.move(x, y)
+
+    def reposition(self):
+        """Re-apply positioning (e.g. after y_offset changes) while visible."""
+        if self.isVisible():
+            self._position()
+
     def show(self):
         """
         Position the window in the center of the screen and show it.
         """
-        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-        screen_geometry = screen.geometry()
-        screen_width = screen_geometry.width()
-        screen_height = screen_geometry.height()
-        window_width = self.width()
-        window_height = self.height()
-
-        x = screen_geometry.x() + (screen_width - window_width) // 2
-        y = screen_geometry.y() + (screen_height - window_height) // 2
-
-        self.move(x, y)
+        self._position()
         keep_visible_when_inactive(self)
         prev = frontmost_app()  # showing steals app activation on macOS 26 — give it back
         super().show()

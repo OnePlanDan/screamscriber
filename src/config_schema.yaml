@@ -265,3 +265,67 @@ api_server:
     type: bool
     label: "Beep when countdown starts"
     description: "Play a short system beep when the remote-typing countdown opens."
+
+# Shaping mode: press Space while holding the activation key to toggle.
+# Dictations stack in a box and a local LLM reshapes them before typing.
+shaping:
+  llm_host:
+    value: "127.0.0.1"
+    type: str
+    label: "LLM host"
+    description: "Host of the OpenAI-compatible endpoint used for text shaping."
+  llm_port:
+    value: 8080
+    type: int
+    label: "LLM port"
+    description: "Port of the OpenAI-compatible endpoint used for text shaping."
+  llm_model:
+    value: "qwen3-8b"
+    type: str
+    label: "LLM model"
+    description: "Model name sent to the shaping endpoint."
+  llm_api_key:
+    value: "local"
+    type: str
+    label: "LLM API key"
+    description: "API key for the shaping endpoint. Local servers often require a fixed key (e.g. mtplx's --api-key value)."
+  system_prompt:
+    value: "You rewrite text. Follow the instruction exactly. Preserve the language of the text. Output ONLY the rewritten text with no explanations and no surrounding quotes."
+    type: str
+    label: "Shaping system prompt"
+    description: "System prompt for every shaping call. The model's thinking streams live in the shaping window; append /no_think to suppress Qwen3 thinking entirely."
+  prompt_formal_more:
+    value: "Make the text a little more formal."
+    type: str
+    label: "f — more formal"
+    description: "Instruction sent when pressing f in the shaping window."
+  prompt_formal_less:
+    value: "Make the text a little less formal, more casual."
+    type: str
+    label: "F — less formal"
+    description: "Instruction sent when pressing F in the shaping window."
+  prompt_length_more:
+    value: "Expand the text a little, adding useful detail."
+    type: str
+    label: "l — longer"
+    description: "Instruction sent when pressing l in the shaping window."
+  prompt_length_less:
+    value: "Shorten the text a little, keeping all key points."
+    type: str
+    label: "L — shorter"
+    description: "Instruction sent when pressing L in the shaping window."
+  prompt_examples_more:
+    value: "Add one concrete example where it helps understanding."
+    type: str
+    label: "e — more examples"
+    description: "Instruction sent when pressing e in the shaping window."
+  prompt_examples_less:
+    value: "Remove or compress examples, keeping the core statements."
+    type: str
+    label: "E — fewer examples"
+    description: "Instruction sent when pressing E in the shaping window."
+  prompt_coherent:
+    value: "Clean up the text: remove filler words, false starts and repetitions; finish half-finished sentences; keep the speaker's voice, language and meaning."
+    type: str
+    label: "c — clean up"
+    description: "Instruction sent when pressing c in the shaping window. The ramble-fixer."
