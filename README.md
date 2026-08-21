@@ -24,7 +24,13 @@ See the [API Documentation](./assets/api_docs.html) for endpoints, examples, and
     <img src="./assets/coil-whine-spectrogram.png" alt="Spectrogram of the beep" width="260" align="right">
 </a>
 
-Once, this app hummed its own thoughts into its own microphone — and it took a human ear and a machine's spectrogram together to catch it. Read [the story of the beep](./docs/the-beep.md).
+Once, this app hummed its own thoughts into its own microphone — and it took a human ear and a machine's spectrogram together to catch it.
+
+After a macOS update, holding the dictation key produced a faint, distorted beep: too quiet to trust, too regular to ignore. Only one of us could hear it. But the app's own frequency analyzer showed the sound even in total silence — which meant the microphone was picking it up, and what a microphone captures, an assistant can analyze. Twenty seconds of recorded "silence" later, the confession was on paper: thirty-six bursts, one every 0.535 seconds, in a harmonic comb — the laptop's power circuitry singing under the pulsed GPU load of the live-transcription preview, picked up by the internal mic centimeters away.
+
+The app was literally recording the sound of its own thinking. Read [the story of the beep](./docs/the-beep.md).
+
+<br clear="all">
 
 ## Credits
 
