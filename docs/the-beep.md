@@ -2,6 +2,10 @@
 
 *A debugging story about a machine that hummed its own thoughts into its own microphone — and the two very different kinds of listener it took to catch it.*
 
+<p align="center">
+    <img src="../assets/coil-whine-spectrogram.png" alt="Spectrogram of the beep" width="720">
+</p>
+
 ## The symptom
 
 One morning, after a macOS update (Tahoe 26.6.2), the hold-to-dictate key started misbehaving in two ways at once: transcribed text landed in an unfocused window, and holding the key produced a faint, low, *distorted* beep — the kind of sound you'd describe as "component failure" if you had to describe it at all. Pulsing, roughly once a second. Quiet enough to doubt, persistent enough to annoy.
@@ -17,10 +21,6 @@ Then came the observation that changed everything: the beep was **visible in the
 So we gave the app a temporary debug tap: every recording also saved as a WAV file. The human held the key and said nothing for twenty seconds. That silence became the most informative recording the app ever made.
 
 ## What the silence contained
-
-<p align="center">
-    <img src="../assets/coil-whine-spectrogram.png" alt="Spectrogram of the beep" width="720">
-</p>
 
 Analysis of the "silent" capture found:
 
