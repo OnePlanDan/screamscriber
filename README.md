@@ -8,6 +8,10 @@
 
 Hold the key. Speak. Text appears. Wow.
 
+<p align="center">
+    <img src="./assets/demo.gif" alt="Screamscriber dictating text into an editor" width="800">
+</p>
+
 ## API Server
 
 Screamscriber can host an OpenAI-compatible transcription API, so other apps or a second Screamscriber instance can send audio over the network for transcription.
@@ -15,6 +19,10 @@ Screamscriber can host an OpenAI-compatible transcription API, so other apps or 
 See the [API Documentation](./assets/api_docs.html) for endpoints, examples, and chaining setup.
 
 ## The Beep
+
+<a href="./docs/the-beep.md">
+    <img src="./assets/coil-whine-spectrogram.png" alt="Spectrogram of the beep" width="260" align="right">
+</a>
 
 Once, this app hummed its own thoughts into its own microphone — and it took a human ear and a machine's spectrogram together to catch it. Read [the story of the beep](./docs/the-beep.md).
 
