@@ -1,3 +1,4 @@
+import sys
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from typing import Optional, Callable, Set, List
@@ -286,6 +287,10 @@ class KeyListener:
             "on_activate": [],
             "on_deactivate": [],
             "on_any_key_press": [],
+            # Space pressed while the activation chord is held (shaping-mode
+            # toggle). On macOS the space event is also swallowed so it never
+            # types into the focused app — see PynputBackend._darwin_intercept.
+            "on_chord_space": [],
         }
         self.load_activation_keys()
         self.initialize_backends()
@@ -323,7 +328,7 @@ class KeyListener:
         if not self.backends:
             raise RuntimeError("No supported input backend found")
         self.active_backend = self.backends[0]
-        self.active_backend.on_input_event = self.on_input_event
+        self._wire_backend()
 
     def set_active_backend(self, backend_class):
         """Set a specific backend as active."""
@@ -332,10 +337,19 @@ class KeyListener:
             if self.active_backend:
                 self.stop()
             self.active_backend = new_backend
-            self.active_backend.on_input_event = self.on_input_event
+            self._wire_backend()
             self.start()
         else:
             raise ValueError(f"Backend {backend_class.__name__} is not available")
+
+    def _wire_backend(self):
+        """Connect the active backend to this listener's event handling and
+        give it what the macOS space-suppression intercept needs."""
+        self.active_backend.on_input_event = self.on_input_event
+        self.active_backend.chord_active_check = (
+            lambda: self.key_chord.is_active() if self.key_chord else False)
+        self.active_backend.on_space_toggle = (
+            lambda: self._trigger_callbacks('on_chord_space'))
 
     def update_backend(self):
         """Update the active backend based on current configuration."""
@@ -399,6 +413,13 @@ class KeyListener:
 
         if event_type == InputEvent.KEY_PRESS and self.callbacks.get("on_any_key_press"):
             self._trigger_callbacks("on_any_key_press")
+
+        # Shaping-mode toggle fallback for platforms without the macOS
+        # intercept (there the suppressed space never reaches this handler).
+        if (sys.platform != 'darwin'
+                and key == KeyCode.SPACE and event_type == InputEvent.KEY_PRESS
+                and self.key_chord.is_active()):
+            self._trigger_callbacks('on_chord_space')
 
         was_active = self.key_chord.is_active()
         is_active = self.key_chord.update(key, event_type)
@@ -788,7 +809,11 @@ class PynputBackend(InputBackend):
 
         self.keyboard_listener = self.keyboard.Listener(
             on_press=self._on_keyboard_press,
-            on_release=self._on_keyboard_release
+            on_release=self._on_keyboard_release,
+            # macOS-only (pynput ignores prefixed args elsewhere): lets us
+            # swallow Space while the activation chord is held, so the
+            # shaping-mode toggle never types a space/nbsp into the app.
+            darwin_intercept=self._darwin_intercept,
         )
         self.mouse_listener = self.mouse.Listener(
             on_click=self._on_mouse_click
@@ -821,6 +846,30 @@ class PynputBackend(InputBackend):
                 print(f"Warning: Error stopping mouse listener: {e}")
             finally:
                 self.mouse_listener = None
+
+    def _darwin_intercept(self, event_type, event):
+        """Swallow Space (keycode 49) while the activation chord is active.
+
+        Runs inside the CGEvent tap on every keyboard event — must be fast
+        and must never raise, or events get dropped. Returning None consumes
+        the event (it reaches neither the focused app nor pynput's handler),
+        so the toggle callback fires from here.
+        """
+        try:
+            check = getattr(self, 'chord_active_check', None)
+            if check is None or not check():
+                return event
+            import Quartz
+            keycode = Quartz.CGEventGetIntegerValueField(
+                event, Quartz.kCGKeyboardEventKeycode)
+            if keycode == 49:  # kVK_Space
+                toggle = getattr(self, 'on_space_toggle', None)
+                if event_type == Quartz.kCGEventKeyDown and toggle is not None:
+                    toggle()
+                return None
+            return event
+        except Exception:
+            return event
 
     def _translate_key_event(self, native_event) -> Optional[tuple[KeyCode, InputEvent]]:
         """Translate a pynput event to our internal event representation."""
