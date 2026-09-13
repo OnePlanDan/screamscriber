@@ -221,6 +221,11 @@ misc:
     type: float
     label: "Batch preview refresh interval"
     description: "Seconds between re-transcriptions in 'batch' preview mode. Longer intervals mean fewer (but not quieter) GPU spikes and a less lively drawer. Ignored in 'streaming' mode, which paces itself."
+  voiceprint_dots:
+    value: true
+    type: bool
+    label: "Voice map dots"
+    description: "While recording, draw a dot on the status window every 0.3 s showing where the last two seconds of audio land in speaker-embedding space: the same voice clusters together, while whispering, other speakers and music land elsewhere. Nothing is saved. Needs the 'voiceprint' extra (sherpa-onnx); the 29 MB embedding model is downloaded to ~/.cache/screamscriber on first use."
   transcription_log:
     value: true
     type: bool

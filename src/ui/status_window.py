@@ -1,6 +1,6 @@
 import sys
 import os
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal, pyqtSlot, QTimer, QObject
+from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, pyqtSlot, QTimer, QObject
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QBrush, QColor, QPainterPath, QCursor
 from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
@@ -79,6 +79,7 @@ class StatusWindow(BaseWindow):
         self.y_offset = 0  # shifted down while the shaping window is open
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
+        self._voice_dots = []  # [(x, y)] in [-1, 1], oldest first
         self.initStatusUI()
         self.statusSignal.connect(self.updateStatus)
         # Delay showing so a quick tap of the hotkey never materializes a
@@ -223,6 +224,32 @@ class StatusWindow(BaseWindow):
                 x = i * step
                 painter.drawRect(QRectF(x, h - bar_h, bar_w, bar_h))
 
+        # Voice map: one dot per ~300 ms of recording, newest largest and
+        # most opaque, older dots fading, a faint trail joining them.
+        if self._voice_dots:
+            painter.setClipPath(path)
+            margin = 10
+            w = self.width() - 2 * margin
+            h = self.STATUS_HEIGHT - 2 * margin
+            pts = [(margin + (x + 1) / 2 * w, margin + (1 - y) / 2 * h)
+                   for x, y in self._voice_dots]
+            painter.setPen(QColor(255, 92, 40, 60))
+            for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+                painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+            painter.setPen(Qt.NoPen)
+            last = len(pts) - 1
+            for i, (x, y) in enumerate(pts):
+                age = last - i
+                alpha = max(110, 240 - age * 14)
+                r = 6.0 if age == 0 else 3.5
+                painter.setBrush(QColor(255, 92, 40, alpha))
+                painter.drawEllipse(QPointF(x, y), r, r)
+            x, y = pts[-1]
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QColor(255, 255, 255, 230))
+            painter.drawEllipse(QPointF(x, y), 6.0, 6.0)
+            painter.setPen(Qt.NoPen)
+
         # Divider between the status strip and the open drawer.
         if self.drawer_label.isVisible():
             painter.setPen(QColor(0, 0, 0, 30))
@@ -236,6 +263,12 @@ class StatusWindow(BaseWindow):
         Update the spectrum analyzer with the current frequency band levels.
         """
         self.spectrum.set_levels(levels)
+
+    @pyqtSlot(list)
+    def updateVoiceprint(self, points):
+        """Replace the voice-map dots for the current recording."""
+        self._voice_dots = list(points)
+        self.update()
 
     @pyqtSlot(str)
     def showPartial(self, text):
@@ -268,17 +301,20 @@ class StatusWindow(BaseWindow):
             self.icon_label.setPixmap(self.microphone_pixmap)
             self.status_label.setText('Recording...')
             self.spectrum.reset()
+            self._voice_dots = []
             self.resetDrawer()  # start each recording collapsed and empty
             self._show_timer.start()
         elif status == 'transcribing':
             self.icon_label.setPixmap(self.pencil_pixmap)
             self.status_label.setText('Transcribing...')
             self.spectrum.reset()
+            self._voice_dots = []
             # keep the last partial text visible while the final pass runs
 
         if status in ('idle', 'error', 'cancel'):
             self._show_timer.stop()
             self.spectrum.reset()
+            self._voice_dots = []
             self.resetDrawer()
             # hide, don't close — closing the window is what can shuffle
             # macOS key focus away from the window being dictated into
