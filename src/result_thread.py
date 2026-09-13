@@ -1,3 +1,4 @@
+import os
 import time
 import traceback
 import numpy as np
@@ -105,13 +106,6 @@ class ResultThread(QThread):
                 self.statusSignal.emit('idle')
                 return
 
-            # Whisper hallucinates on silence ("Thank you.", "you", ...), so
-            # refuse to transcribe recordings that contain no actual speech.
-            if not self._has_speech(audio_data):
-                ConfigManager.console_print('Discarded: no speech detected in recording.')
-                self.statusSignal.emit('idle')
-                return
-
             self.statusSignal.emit('transcribing')
             ConfigManager.console_print('Transcribing...')
 
@@ -124,6 +118,13 @@ class ResultThread(QThread):
             ConfigManager.console_print(f'Transcription completed in {transcription_time:.2f} seconds. Post-processed line: {result}')
 
             if not self.is_running:
+                return
+
+            # Whisper hallucinates on silence ("Thank you.", "you", ...).
+            # Anything longer than a few words is real dictation and is
+            # always delivered; only short results get the silence check.
+            if not self._keep_result(result, audio_data):
+                self.statusSignal.emit('idle')
                 return
 
             self.statusSignal.emit('idle')
@@ -233,37 +234,103 @@ class ResultThread(QThread):
         except Exception:
             traceback.print_exc()
 
-    def _has_speech(self, audio_data):
-        """True if the recording contains at least min_speech_duration ms of
-        VAD-detected speech. Threshold 0 disables the gate."""
-        min_speech_ms = ConfigManager.get_config_value(
-            'recording_options', 'min_speech_duration')
-        if not min_speech_ms:
+    # Results with more words than this are delivered without any check —
+    # a hallucination on silence is always a short stock phrase.
+    MAX_HALLUCINATION_WORDS = 4
+
+    # Phrases Whisper produces for silence or breath. Compared after
+    # lowercasing and stripping punctuation.
+    HALLUCINATION_PHRASES = {
+        'thank you', 'thank you very much', 'thanks', 'thank you for watching',
+        'thanks for watching', 'you', 'bye', 'the end', 'please subscribe',
+        'subtitles by the amaraorg community', 'subtitles by the amara org community',
+    }
+
+    def _keep_result(self, result, audio_data):
+        """Decide whether a transcription is delivered or discarded.
+
+        Long results (more than MAX_HALLUCINATION_WORDS words) always pass.
+        Empty results are dropped. A short result is dropped only when it
+        is a known hallucination phrase AND the audio carries less than
+        min_speech_duration ms of detected speech — measured captures
+        showed a quietly spoken "Yes." and a hallucinated "Thank you." are
+        nearly identical in level, so the text is the primary signal and
+        the audio only rescues a genuinely spoken stock phrase. Every
+        short-result decision is logged with its numbers, and discarded
+        audio is written to a wav so test runs can be inspected.
+        """
+        words = len(result.split()) if result else 0
+        if words == 0:
+            ConfigManager.console_print('Discarded: empty transcription.')
+            return False
+        if words > self.MAX_HALLUCINATION_WORDS:
             return True
-        # webrtcvad alone is too permissive — it flags breath and room noise
-        # as speech — so a frame only counts when it also clears an energy
-        # floor. Calibrated on real captures: true silence scores ~150 ms,
-        # normal dictation ~1400 ms, so the default 200 ms threshold splits
-        # them cleanly. (Whisper's own no_speech_prob is 0.0 even on breath
-        # it hallucinates "Thank you." for — measured, not usable.)
-        rms_floor = 0.015
-        vad = webrtcvad.Vad(3)
+
+        normalized = ''.join(c for c in result.lower() if c.isalnum() or c.isspace())
+        normalized = ' '.join(normalized.split())
+        is_stock_phrase = normalized in self.HALLUCINATION_PHRASES
+        speech_ms, peak_rms = self._measure_speech(audio_data)
+        min_speech_ms = ConfigManager.get_config_value(
+            'recording_options', 'min_speech_duration') or 0
+        keep = not (is_stock_phrase and speech_ms < min_speech_ms)
+        verdict = 'kept' if keep else 'Discarded'
+        ConfigManager.console_print(
+            f'{verdict} short result ({words} words, stock_phrase={is_stock_phrase}, '
+            f'speech={speech_ms} ms, threshold={min_speech_ms} ms, '
+            f'peak_rms={peak_rms:.4f}): {result!r}')
+        if not keep:
+            self._dump_discarded(audio_data, result)
+        return keep
+
+    def _measure_speech(self, audio_data):
+        """Return (speech_ms, peak_rms) for a recording.
+
+        webrtcvad alone is too permissive — it flags breath and room noise
+        as speech — so a frame only counts when it also clears an energy
+        floor. The floor is low because this mic setup is quiet: measured
+        2026-09-13, a spoken "Yes." peaked at RMS 0.003-0.010 while
+        hallucinated "Thank you." captures peaked at 0.0013-0.0019 with
+        zero VAD frames. (Whisper's own no_speech_prob is 0.0 even on
+        breath it hallucinates for — measured, not usable.) If the VAD
+        cannot handle the sample rate, report the whole recording as
+        speech so nothing is ever blocked by a tooling gap.
+        """
+        rms_floor = 0.005
         frame = int(self.sample_rate * 0.03)
         speech_ms = 0
-        for i in range(0, len(audio_data) - frame + 1, frame):
-            f = audio_data[i:i + frame]
-            rms = np.sqrt(np.mean((f.astype(np.float32) / 32768.0) ** 2))
-            if rms < rms_floor:
-                continue
-            try:
+        peak_rms = 0.0
+        try:
+            vad = webrtcvad.Vad(3)
+            for i in range(0, len(audio_data) - frame + 1, frame):
+                f = audio_data[i:i + frame]
+                rms = float(np.sqrt(np.mean((f.astype(np.float32) / 32768.0) ** 2)))
+                peak_rms = max(peak_rms, rms)
+                if rms < rms_floor:
+                    continue
                 if vad.is_speech(f.tobytes(), self.sample_rate):
                     speech_ms += 30
-                    if speech_ms >= min_speech_ms:
-                        return True
-            except Exception:
-                # Unsupported rate/frame for webrtcvad — never block typing.
-                return True
-        return False
+        except Exception:
+            return int(len(audio_data) / self.sample_rate * 1000), peak_rms
+        return speech_ms, peak_rms
+
+    def _dump_discarded(self, audio_data, result):
+        """Write a discarded recording to the discards folder for review."""
+        try:
+            folder = os.path.join(os.path.expanduser('~'), 'Library', 'Logs',
+                                  'screamscriber-discards')
+            os.makedirs(folder, exist_ok=True)
+            stamp = time.strftime('%Y%m%d-%H%M%S')
+            path = os.path.join(folder, f'{stamp}.wav')
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(self.sample_rate)
+                w.writeframes(audio_data.tobytes())
+            with open(os.path.join(folder, 'discards.log'), 'a') as f:
+                f.write(f'{stamp}\t{path}\t{result!r}\n')
+            ConfigManager.console_print(f'Discarded audio saved to {path}')
+        except Exception:
+            traceback.print_exc()
 
     def _record_audio(self):
         """

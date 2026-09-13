@@ -139,4 +139,4 @@ class ConfigManager:
     def console_print(cls, message):
         """Print a message to the console if enabled in the configuration."""
         if cls._instance and cls._instance.config['misc']['print_to_terminal']:
-            print(message)
+            print(message, flush=True)
