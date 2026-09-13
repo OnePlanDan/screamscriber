@@ -19,6 +19,7 @@ if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
   EXTRAS+=(--extra mac)
 fi
 EXTRAS+=(--extra faster-whisper)
+EXTRAS+=(--extra voiceprint)
 
 echo "Resolving and installing dependencies..."
 uv sync "${EXTRAS[@]}"

@@ -11,6 +11,7 @@ from collections import deque
 from threading import Event, Thread
 
 from transcription import transcribe, resolve_engine
+import voiceprint
 from utils import ConfigManager
 
 # Live preview modes (misc.live_preview): 'batch' re-transcribes the whole
@@ -56,6 +57,7 @@ class ResultThread(QThread):
     resultSignal = pyqtSignal(str)
     audioLevelSignal = pyqtSignal(list)
     partialResultSignal = pyqtSignal(str)
+    voiceprintSignal = pyqtSignal(list)  # [(x, y), ...] for the current recording
 
     def __init__(self, local_model=None):
         """
@@ -234,6 +236,41 @@ class ResultThread(QThread):
         except Exception:
             traceback.print_exc()
 
+    def _voiceprint_loop(self, recording):
+        """Emit a 2D voice-map point every ~300 ms while recording.
+
+        Each point embeds the most recent WINDOW_S seconds of audio with
+        the speaker model (CPU only, ~30 ms) so it never competes with the
+        transcription engine for the GPU. All points of the current
+        recording are re-projected and re-emitted on every pass, so the
+        whole trail stays consistent as the projection settles.
+        """
+        vp = voiceprint.Voiceprint.get()
+        if not vp.available():
+            return
+        sr = self.sample_rate
+        window = int(voiceprint.WINDOW_S * sr)
+        min_samples = int(voiceprint.MIN_S * sr)
+        embeddings = []
+        last_len = 0
+        try:
+            while not self._partial_stop.wait(voiceprint.INTERVAL_S):
+                if not (self.is_running and self.is_recording):
+                    break
+                n = len(recording)
+                if n < min_samples or n == last_len:
+                    continue
+                last_len = n
+                chunk = np.array(recording[max(0, n - window):n], dtype=np.int16)
+                emb = vp.embed(chunk, sr)
+                if emb is None:
+                    continue
+                vp.observe(emb)
+                embeddings.append(emb)
+                self.voiceprintSignal.emit(vp.project(embeddings))
+        except Exception:
+            traceback.print_exc()
+
     # Results with more words than this are delivered without any check —
     # a hallucination on silence is always a short stock phrase.
     MAX_HALLUCINATION_WORDS = 4
@@ -403,6 +440,10 @@ class ResultThread(QThread):
         if self._live_preview_enabled():
             partial_thread = Thread(target=self._partial_loop, args=(recording,), daemon=True)
             partial_thread.start()
+        voiceprint_thread = None
+        if voiceprint.enabled():
+            voiceprint_thread = Thread(target=self._voiceprint_loop, args=(recording,), daemon=True)
+            voiceprint_thread.start()
 
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16',
                             blocksize=frame_size, device=recording_options.get('sound_device'),
@@ -443,6 +484,8 @@ class ResultThread(QThread):
         self._partial_stop.set()
         if partial_thread is not None:
             partial_thread.join(timeout=3.0)
+        if voiceprint_thread is not None:
+            voiceprint_thread.join(timeout=1.0)
 
         audio_data = np.array(recording, dtype=np.int16)
         duration = len(audio_data) / self.sample_rate
