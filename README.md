@@ -9,7 +9,7 @@
 Hold the key. Speak. Text appears. Wow.
 
 <p align="center">
-    <img src="./assets/demo.gif" alt="Screamscriber dictating text into an editor" width="568">
+    <img src="./assets/demo.gif" alt="Screamscriber dictating into a terminal: live preview, spectrum and voice-map dots, then the text lands on release" width="600">
 </p>
 
 ## API Server
