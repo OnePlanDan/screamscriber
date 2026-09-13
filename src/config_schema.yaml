@@ -155,7 +155,7 @@ recording_options:
     value: 200
     type: int
     label: "Minimum speech to transcribe (ms)"
-    description: "Discard recordings containing less than this many milliseconds of voice-activity-detected speech, instead of letting the model hallucinate on silence ('Thank you.'). Set 0 to disable the check."
+    description: "Short transcriptions (4 words or fewer) that match a known silence hallucination ('Thank you.', 'you', 'Bye.') are discarded unless the recording contains at least this many milliseconds of voice-activity-detected speech. Everything else is always delivered. Set 0 to disable the check."
 
 # Post-processing options for the transcribed text
 post_processing:
@@ -329,3 +329,14 @@ shaping:
     type: str
     label: "c — clean up"
     description: "Instruction sent when pressing c in the shaping window. The ramble-fixer."
+  reasoning_effort:
+    value: "off"
+    type: str
+    label: "Reasoning effort"
+    description: "How much the shaping model thinks before rewriting. Thinking dominates latency: 'off' disables it entirely (fastest, mtplx chat-template switch), 'low'..'high' dial it. Server-dependent."
+    options:
+      - "off"
+      - auto
+      - low
+      - medium
+      - high
