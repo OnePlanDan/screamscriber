@@ -225,7 +225,22 @@ misc:
     value: true
     type: bool
     label: "Voice map dots"
-    description: "While recording, draw a dot on the status window every 0.3 s showing where the last two seconds of audio land in speaker-embedding space: the same voice clusters together, while whispering, other speakers and music land elsewhere. Nothing is saved. Needs the 'voiceprint' extra (sherpa-onnx); the 29 MB embedding model is downloaded to ~/.cache/screamscriber on first use."
+    description: "While recording, draw a dot on the status window every 0.3 s showing where the last two seconds of audio land in speaker-embedding space: the same voice clusters together, while whispering, other speakers and music land elsewhere. The dots are never saved. Also powers the voice meter and voice lock. Needs the 'voiceprint' extra (sherpa-onnx); the 28 MB embedding model is downloaded to ~/.cache/screamscriber on first use."
+  voice_name:
+    value: "you"
+    type: str
+    label: "Name on the voice meter"
+    description: "Shown on the status window's voice meter, as in 'This is <name>'. The meter appears once a voice has been taught with 'Learn my voice' in the tray menu (3 takes or more)."
+  voice_lock:
+    value: false
+    type: bool
+    label: "Voice lock"
+    description: "Discard a recording whose voice scores below the voice match threshold against the voice taught with 'Learn my voice'. Off by default: the meter and the log still show every score, so you can see how reliable it is first. A recording with no clearly voiced speech (whispers, silence) is never discarded by this check. Discarded audio goes to the discards folder like any other."
+  voice_lock_threshold:
+    value: 0.45
+    type: float
+    label: "Voice match threshold"
+    description: "Score at which the voice meter turns green and below which the voice lock discards. Measured live on one setup with 12 enrolled takes: the enrolled speaker scored 0.47-0.79 (even on a 0.4 s sound), while another voice played through the speakers scored 0.31. Voices played into the same room and mic score higher than other people do in clean recordings."
   transcription_log:
     value: true
     type: bool

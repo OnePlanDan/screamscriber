@@ -1,6 +1,6 @@
 import sys
 import os
-from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, pyqtSlot, QTimer, QObject
+from PyQt5.QtCore import Qt, QRectF, QPoint, QPointF, pyqtSignal, pyqtSlot, QTimer, QObject
 from PyQt5.QtGui import QFont, QPixmap, QIcon, QPainter, QBrush, QColor, QPainterPath, QCursor
 from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
@@ -80,6 +80,7 @@ class StatusWindow(BaseWindow):
         self.spectrum = SpectrumData(self)
         self.spectrum.updated.connect(self.update)
         self._voice_dots = []  # [(x, y)] in [-1, 1], oldest first
+        self._voice_reading = None  # latest voice-meter dict from ResultThread
         self.initStatusUI()
         self.statusSignal.connect(self.updateStatus)
         # Delay showing so a quick tap of the hotkey never materializes a
@@ -105,8 +106,7 @@ class StatusWindow(BaseWindow):
         self.close_button.hide()
 
         status_layout = QHBoxLayout()
-        status_layout.setContentsMargins(6, 4, 2, 4)
-        status_layout.setAlignment(Qt.AlignVCenter)
+        status_layout.setContentsMargins(6, 4, 2, 0)
 
         # Left side: title + status stacked tight, top-left
         text_layout = QVBoxLayout()
@@ -125,20 +125,33 @@ class StatusWindow(BaseWindow):
         text_layout.addWidget(self.status_label)
         text_layout.addStretch(1)
 
-        # Right side: full-height icon, vertically centered
-        icon_size = 70
-        microphone_path = os.path.join('assets', 'microphone.png')
-        pencil_path = os.path.join('assets', 'pencil.png')
-        self.microphone_pixmap = QPixmap(microphone_path).scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.pencil_pixmap = QPixmap(pencil_path).scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # Right side: voice meter line top-right (hidden until a reading
+        # arrives; its bar is painted beneath it in paintEvent), and a
+        # small see-through icon in the bottom-right corner so the
+        # spectrum and voice dots show through it
+        self.voice_label = QLabel('')
+        self.voice_label.setFont(ui_font(8))
+        self.voice_label.setStyleSheet(label_color)
+        self.voice_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        self.voice_label.setContentsMargins(0, 0, 0, self.VOICE_BAR_SPACE)  # room for the bar
+        self.voice_label.hide()
+        icon_size = 35
+        self.microphone_pixmap = self._faded_icon('microphone.png', icon_size)
+        self.pencil_pixmap = self._faded_icon('pencil.png', icon_size)
         self.icon_label = QLabel()
         self.icon_label.setFixedSize(icon_size, icon_size)
         self.icon_label.setPixmap(self.microphone_pixmap)
         self.icon_label.setAlignment(Qt.AlignCenter)
 
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(0)
+        right_layout.addWidget(self.voice_label, alignment=Qt.AlignRight)
+        right_layout.addStretch(1)
+        right_layout.addWidget(self.icon_label, alignment=Qt.AlignRight)
+
         status_layout.addLayout(text_layout)
         status_layout.addStretch(1)
-        status_layout.addWidget(self.icon_label, alignment=Qt.AlignVCenter)
+        status_layout.addLayout(right_layout)
 
         self.main_layout.addLayout(status_layout)
 
@@ -151,6 +164,24 @@ class StatusWindow(BaseWindow):
         self.drawer_label.setStyleSheet("color: #202020; padding: 0 4px;")
         self.drawer_label.hide()
         self.main_layout.addWidget(self.drawer_label)
+
+    ICON_OPACITY = 0.35
+
+    @classmethod
+    def _faded_icon(cls, filename, size):
+        """Icon scaled for the screen's pixel ratio and drawn at ICON_OPACITY."""
+        screen = QApplication.primaryScreen()
+        ratio = screen.devicePixelRatio() if screen else 1.0
+        source = QPixmap(os.path.join('assets', filename)).scaled(
+            int(size * ratio), int(size * ratio), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        faded = QPixmap(source.size())
+        faded.fill(Qt.transparent)
+        painter = QPainter(faded)
+        painter.setOpacity(cls.ICON_OPACITY)
+        painter.drawPixmap(0, 0, source)
+        painter.end()
+        faded.setDevicePixelRatio(ratio)
+        return faded
 
     def _position(self):
         screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
@@ -204,21 +235,23 @@ class StatusWindow(BaseWindow):
         painter.setPen(Qt.NoPen)
         painter.drawPath(path)
 
-        # Draw spectrum bars, confined to the top status strip so they never
-        # paint behind the drawer text when the window is expanded.
+        # Draw spectrum bars in the lower half of the top status strip, so
+        # they never paint behind the drawer text when the window is
+        # expanded and leave the upper half clear for the text.
         if self.spectrum.active:
             painter.setClipPath(path)
             painter.setBrush(QColor(0, 0, 0))
             painter.setPen(Qt.NoPen)
 
             h = self.STATUS_HEIGHT
+            max_bar_h = h / 2
             n = SpectrumData.NUM_BANDS
             bar_w = 1.0
             step = 2.0  # 1px bar + 1px gap
             display = self.spectrum.display
 
             for i in range(n):
-                bar_h = display[i] * h
+                bar_h = display[i] * max_bar_h
                 if bar_h < 1:
                     continue
                 x = i * step
@@ -250,6 +283,36 @@ class StatusWindow(BaseWindow):
             painter.drawEllipse(QPointF(x, y), 6.0, 6.0)
             painter.setPen(Qt.NoPen)
 
+        # Voice meter: drawn after the dots, on a white pill, so the line stays
+        # readable over the bars and dots.
+        # Text and bar are right-aligned to the label's right edge. The
+        # bar's threshold tick sits mid-bar; the fill turns amber when
+        # close and green once the score reaches it.
+        reading = self._voice_reading
+        if reading and not self.voice_label.isHidden():
+            painter.setClipPath(path)
+            top_left = self.voice_label.mapTo(self, QPoint(0, 0))
+            right = top_left.x() + self.voice_label.width()
+            label_h = self.voice_label.height()
+            text_h = label_h - self.VOICE_BAR_SPACE
+            has_bar = reading['score'] is not None
+            pill_w = max(self.voice_label.sizeHint().width(), self.VOICE_BAR_W) + 8
+            pill_h = (label_h if has_bar else text_h) + 2
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(255, 255, 255, 235))
+            painter.drawRoundedRect(QRectF(right + 4 - pill_w, top_left.y() - 1, pill_w, pill_h), 5, 5)
+            if has_bar:
+                bar = QRectF(right - self.VOICE_BAR_W, top_left.y() + text_h + 2, self.VOICE_BAR_W, 5)
+                painter.setBrush(QColor(225, 225, 225))
+                painter.drawRoundedRect(bar, 2, 2)
+                fraction = max(0.0, min(1.0, reading['score'] / (2 * reading['threshold'])))
+                painter.setBrush(self._voice_color(reading))
+                painter.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * fraction, bar.height()), 2, 2)
+                painter.setPen(QColor(60, 60, 60))
+                tick_x = bar.x() + bar.width() / 2
+                painter.drawLine(QPointF(tick_x, bar.y() - 1), QPointF(tick_x, bar.bottom() + 1))
+                painter.setPen(Qt.NoPen)
+
         # Divider between the status strip and the open drawer.
         if self.drawer_label.isVisible():
             painter.setPen(QColor(0, 0, 0, 30))
@@ -269,6 +332,46 @@ class StatusWindow(BaseWindow):
         """Replace the voice-map dots for the current recording."""
         self._voice_dots = list(points)
         self.update()
+
+    VOICE_BAR_W = 120
+    VOICE_BAR_SPACE = 9  # px reserved under the meter text for the bar
+    VOICE_GREEN = QColor(40, 150, 60)
+    VOICE_AMBER = QColor(220, 160, 30)
+    VOICE_GREY = QColor(150, 150, 150)
+
+    def _voice_color(self, reading):
+        score, threshold = reading['score'], reading['threshold']
+        if score >= threshold:
+            return self.VOICE_GREEN
+        if score >= threshold * 2 / 3:
+            return self.VOICE_AMBER
+        return self.VOICE_GREY
+
+    @pyqtSlot(object)
+    def updateVoiceMatch(self, reading):
+        """Show the voice meter: who it thinks is talking, the score
+        against the enrolled voice, and how much voiced speech it has."""
+        self._voice_reading = reading
+        name, score, speech = reading['name'], reading['score'], reading['speech_s']
+        if score is None:
+            text = (f'Learning your voice · {speech:.1f} s' if reading['learning']
+                    else f'Listening for {name}…')
+        elif score >= reading['threshold']:
+            text = f'This is {name} · {score:.2f} · {speech:.1f} s'
+        else:
+            text = f'{name}? {score:.2f} · {speech:.1f} s'
+        if reading['learning'] and score is not None:
+            text = 'Learning · ' + text
+        color = self.VOICE_GREEN if score is not None and score >= reading['threshold'] else QColor(64, 64, 64)
+        self.voice_label.setStyleSheet(f'color: {color.name()};')
+        self.voice_label.setText(text)
+        self.voice_label.show()
+        self.update()
+
+    def _reset_voice_meter(self):
+        self._voice_reading = None
+        self.voice_label.clear()
+        self.voice_label.hide()
 
     @pyqtSlot(str)
     def showPartial(self, text):
@@ -302,6 +405,7 @@ class StatusWindow(BaseWindow):
             self.status_label.setText('Recording...')
             self.spectrum.reset()
             self._voice_dots = []
+            self._reset_voice_meter()
             self.resetDrawer()  # start each recording collapsed and empty
             self._show_timer.start()
         elif status == 'transcribing':
@@ -309,12 +413,14 @@ class StatusWindow(BaseWindow):
             self.status_label.setText('Transcribing...')
             self.spectrum.reset()
             self._voice_dots = []
-            # keep the last partial text visible while the final pass runs
+            # keep the last partial text and voice reading visible while
+            # the final pass runs
 
         if status in ('idle', 'error', 'cancel'):
             self._show_timer.stop()
             self.spectrum.reset()
             self._voice_dots = []
+            self._reset_voice_meter()
             self.resetDrawer()
             # hide, don't close — closing the window is what can shuffle
             # macOS key focus away from the window being dictated into

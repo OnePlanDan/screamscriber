@@ -72,6 +72,7 @@ from ui.countdown_window import CountdownWindow
 from input_simulation import InputSimulator
 from typing_gate import TypingGate
 from utils import ConfigManager
+import voiceprint
 
 
 class ScreamScriberApp(QObject):
@@ -233,12 +234,36 @@ class ScreamScriberApp(QObject):
         settings_action.triggered.connect(self.settings_window.show)
         tray_menu.addAction(settings_action)
 
+        # Voice meter enrolment: while checked, every take with enough
+        # voiced speech is added to the enrolled voice. Session only.
+        if voiceprint.enabled():
+            self.learn_voice_action = QAction('Learn my voice', self.app, checkable=True)
+            self.learn_voice_action.toggled.connect(self._set_voice_learning)
+            tray_menu.addAction(self.learn_voice_action)
+            self.forget_voice_action = QAction('Forget my voice', self.app)
+            self.forget_voice_action.triggered.connect(self._forget_voice)
+            tray_menu.addAction(self.forget_voice_action)
+            tray_menu.aboutToShow.connect(self._refresh_voice_menu)
+
         exit_action = QAction('Exit', self.app)
         exit_action.triggered.connect(self.exit_app)
         tray_menu.addAction(exit_action)
 
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
+
+    def _refresh_voice_menu(self):
+        n = voiceprint.Voiceprint.get().enrolled_takes()
+        self.learn_voice_action.setText(f'Learn my voice ({n} takes enrolled)' if n else 'Learn my voice')
+        self.forget_voice_action.setEnabled(n > 0)
+
+    def _set_voice_learning(self, checked):
+        voiceprint.Voiceprint.get().learning = checked
+        ConfigManager.console_print(f"Voice: learning {'on' if checked else 'off'}.")
+
+    def _forget_voice(self):
+        voiceprint.Voiceprint.get().forget()
+        ConfigManager.console_print('Voice: enrolled voice forgotten.')
 
     def cleanup(self):
         if self.api_server:
@@ -338,6 +363,7 @@ class ScreamScriberApp(QObject):
             self.result_thread.audioLevelSignal.connect(self.status_window.updateAudioLevel)
             self.result_thread.partialResultSignal.connect(self.status_window.showPartial)
             self.result_thread.voiceprintSignal.connect(self.status_window.updateVoiceprint)
+            self.result_thread.voiceMatchSignal.connect(self.status_window.updateVoiceMatch)
             self.status_window.closeSignal.connect(self.stop_result_thread)
         self.result_thread.resultSignal.connect(self.on_transcription_complete)
         # Live feedback in the shaping window: the upcoming segment number
