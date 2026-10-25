@@ -58,6 +58,7 @@ class ResultThread(QThread):
     audioLevelSignal = pyqtSignal(list)
     partialResultSignal = pyqtSignal(str)
     voiceprintSignal = pyqtSignal(list)  # [(x, y), ...] for the current recording
+    voiceMatchSignal = pyqtSignal(object)  # voice-meter reading dict, see _voiceprint_loop
 
     def __init__(self, local_model=None):
         """
@@ -72,6 +73,7 @@ class ResultThread(QThread):
         self.sample_rate = None
         self.mutex = QMutex()
         self._partial_stop = Event()
+        self._voice_take = None  # left by _voiceprint_loop for the voice check
 
     def stop_recording(self):
         """Stop the current recording session."""
@@ -108,6 +110,8 @@ class ResultThread(QThread):
                 self.statusSignal.emit('idle')
                 return
 
+            self._learn_voice()
+
             self.statusSignal.emit('transcribing')
             ConfigManager.console_print('Transcribing...')
 
@@ -126,6 +130,10 @@ class ResultThread(QThread):
             # Anything longer than a few words is real dictation and is
             # always delivered; only short results get the silence check.
             if not self._keep_result(result, audio_data):
+                self.statusSignal.emit('idle')
+                return
+
+            if not self._voice_check(result, audio_data):
                 self.statusSignal.emit('idle')
                 return
 
@@ -240,10 +248,18 @@ class ResultThread(QThread):
         """Emit a 2D voice-map point every ~300 ms while recording.
 
         Each point embeds the most recent WINDOW_S seconds of audio with
-        the speaker model (CPU only, ~30 ms) so it never competes with the
+        the speaker model (CPU only, ~35 ms) so it never competes with the
         transcription engine for the GPU. All points of the current
         recording are re-projected and re-emitted on every pass, so the
         whole trail stays consistent as the projection settles.
+
+        When a voice is enrolled or being learned, the same embeddings
+        also drive the voice meter: windows holding at least
+        MIN_WINDOW_SPEECH_S of voiced speech are averaged over the take
+        so far and the average is scored against the enrolled takes. The
+        take's average, score, voiced seconds and the voiced second at
+        which the score first reached the threshold are left in
+        self._voice_take for _learn_voice and _voice_check.
         """
         vp = voiceprint.Voiceprint.get()
         if not vp.available():
@@ -251,6 +267,14 @@ class ResultThread(QThread):
         sr = self.sample_rate
         window = int(voiceprint.WINDOW_S * sr)
         min_samples = int(voiceprint.MIN_S * sr)
+        frame = int(0.03 * sr)
+        vad = webrtcvad.Vad(3)
+        threshold = voiceprint.threshold()
+        name = ConfigManager.get_config_value('misc', 'voice_name') or 'you'
+        meter = vp.learning or vp.enrolled_takes() >= voiceprint.MIN_TAKES
+        take = {'mean': None, 'score': None, 'speech_s': 0.0, 'reached_at': None}
+        voiced = []       # per 30 ms frame of the recording so far
+        voiced_sum = None
         embeddings = []
         last_len = 0
         try:
@@ -268,8 +292,67 @@ class ResultThread(QThread):
                 vp.observe(emb)
                 embeddings.append(emb)
                 self.voiceprintSignal.emit(vp.project(embeddings))
+                if not meter:
+                    continue
+                scanned = len(voiced) * frame
+                usable = n - (n - scanned) % frame
+                voiced.extend(voiceprint.voiced_frames(
+                    np.array(recording[scanned:usable], dtype=np.int16), sr, vad))
+                take['speech_s'] = sum(voiced) * 0.03
+                if sum(voiced[-(window // frame):]) * 0.03 >= voiceprint.MIN_WINDOW_SPEECH_S:
+                    voiced_sum = emb if voiced_sum is None else voiced_sum + emb
+                    take['mean'] = voiced_sum / np.linalg.norm(voiced_sum)
+                    take['score'] = vp.match(take['mean'])
+                    if (take['reached_at'] is None and take['score'] is not None
+                            and take['score'] >= threshold):
+                        take['reached_at'] = take['speech_s']
+                self.voiceMatchSignal.emit({
+                    'name': name, 'learning': vp.learning, 'score': take['score'],
+                    'speech_s': take['speech_s'], 'threshold': threshold})
         except Exception:
             traceback.print_exc()
+        finally:
+            self._voice_take = take if meter else None
+
+    def _learn_voice(self):
+        """With "Learn my voice" on, add this take to the enrolled profile."""
+        take = self._voice_take
+        vp = voiceprint.Voiceprint.get()
+        if take is None or not vp.learning:
+            return
+        if take['mean'] is None or take['speech_s'] < voiceprint.MIN_LEARN_SPEECH_S:
+            ConfigManager.console_print(
+                f"Voice: take not learned, only {take['speech_s']:.1f} s of voiced speech "
+                f"(needs {voiceprint.MIN_LEARN_SPEECH_S:.1f} s).")
+            return
+        count = vp.learn(take['mean'])
+        ConfigManager.console_print(
+            f"Voice: learned this take ({take['speech_s']:.1f} s of voiced speech); "
+            f"{count} takes enrolled.")
+
+    def _voice_check(self, result, audio_data):
+        """Log how well the take matched the enrolled voice and, only with
+        misc.voice_lock on, discard it when the score is below threshold.
+
+        A take without a score (nothing enrolled yet, or no window with
+        enough voiced speech) is always delivered: silence is the silence
+        gate's job, this check only rejects a clearly different voice.
+        """
+        take = self._voice_take
+        if take is None or take['score'] is None:
+            return True
+        threshold = voiceprint.threshold()
+        lock = bool(ConfigManager.get_config_value('misc', 'voice_lock'))
+        keep = not lock or take['score'] >= threshold
+        reached = (f"{take['reached_at']:.1f} s" if take['reached_at'] is not None
+                   else 'never')
+        ConfigManager.console_print(
+            f"{'Voice check' if keep else 'Discarded by voice lock'}: score {take['score']:.2f} "
+            f"(threshold {threshold:.2f}) after {take['speech_s']:.1f} s of voiced speech, "
+            f"reached threshold at {reached}; lock {'on' if lock else 'off'}.")
+        if not keep:
+            self._dump_discarded(audio_data, result)
+        return keep
 
     # Results with more words than this are delivered without any check —
     # a hallucination on silence is always a short stock phrase.
