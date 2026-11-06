@@ -42,8 +42,11 @@ cat <<'BANNER'
    3. System Settings → Privacy & Security → Accessibility
         (manual: same procedure)
 
- Default hotkey: Right Option (hold-to-talk).
- If Right Option injects garbled characters, edit src/config.yaml
- and change activation_key to F13.
+ Default hotkey: Right Option. Default mode: continuous (press to
+ start, keeps recording across pauses, press again to stop).
+ Overrides go in src/config.yaml (gitignored), for example:
+   recording_options:
+     activation_key: ALT_RIGHT      # or F13 if Right Option types garbage
+     recording_mode: hold_to_record # talk only while the key is held
 ═══════════════════════════════════════════════════════════════════
 BANNER

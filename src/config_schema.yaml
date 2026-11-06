@@ -115,9 +115,9 @@ model_options:
 # Configuration options for activation and recording
 recording_options:
   activation_key:
-    value: ctrl+shift+space
+    value: ALT_RIGHT
     type: str
-    description: "The keyboard shortcut to activate the recording and transcribing process. Separate keys with a '+'."
+    description: "The keyboard shortcut to activate the recording and transcribing process. Separate keys with a '+', e.g. ctrl+shift+space. Default: Right Option (ALT_RIGHT)."
   input_backend:
     value: auto
     type: str
